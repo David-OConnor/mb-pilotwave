@@ -17,24 +17,23 @@ import numpy as np
 
 # 2D grid, simulatinga a vibrating silicon/oil field. Positive values indicate
 # a height above neutral; negative below.
-GRID_SIZE = (1000, 1000)
-u = np.zeros(GRID_SIZE) # velocity in x direction
-v = np.zeros(GRID_SIZE) # velocity in y direction
-x,y = mgrid[:n,:n]
+GRID_SIZE = (200, 200)
 
 VIBRATION_FREQ = 1/100  # vibration cycles per tick?
-RUN_TIME = 500  # in ticks
+RUN_TIME = 7400  # in ticks
 G = -9.81  # Gravity, in m/s^s
-
-TICKS_PER_SECOND = 1
-
-dt = 1 # Seconds per tick
+dt = 1/100 # Seconds per tick
 
 PARTICLE_MASS = 1  # Assumed to be a point; ie no volume.
 
 # pos in x, y, height above neutral; respective velocities
-PARTICLE_START = (500, 500, 10., 0, 0, 0, 0, 0, -.1)  # should probably be G for z accel.
+PARTICLE_START = (150, 150, 10, 0, 0, 0, 0, 0, G)  # should probably be G for z accel.
+x, y = np.mgrid[:GRID_SIZE[0], :GRID_SIZE[1]]
+droplet_x, droplet_y = PARTICLE_START[0], PARTICLE_START[1]
+rr = (x - droplet_x)**2 + (y - droplet_y)**2
+
 WAVE_SPEED = 10  # m/s. Confirm this is a constant. Group vs phase velocity?
+
 
 # todo do I need accel? Constant down due to g, and bounce accel could be applied instantly??
 
@@ -67,13 +66,13 @@ class Particle:
 
     def bounce(self, surface: np.ndarray) -> None:
         """Perfectly elastic?"""
-        # todo do I need to take xz and yz into account to? Probably!
+        # todo do I need to take xz and yz into account too? Probably!
         ke = 1/2 * self.mass * self.vz**2
 
         # todo temp kludge!!
         nearest_grid_point = int(round(self.sx)), int(round(self.sy))
         self.vz *= -1.0
-        self.sz = surface.grid[nearest_grid_point[0], nearest_grid_point[1], 0]
+        self.sz = surface.η[nearest_grid_point[0], nearest_grid_point[1]]
 
 
 def spatial_derivative(axis: int, A: np.ndarray):
@@ -89,8 +88,8 @@ def spatial_derivative(axis: int, A: np.ndarray):
         d_dx
         d_dy
     """
-    grid_space = 1  # todo what is this?
-    return (np.roll(A, -1, axis) - roll(A, 1, axis)) / (grid_spacing*2.)
+    grid_spacing = 1  # todo what is this?
+    return (np.roll(A, -1, axis) - np.roll(A, 1, axis)) / (grid_spacing*2.)
 
 
 d_dx = partial(spatial_derivative, 1)
@@ -105,7 +104,7 @@ class Surface:
 
         # todo one dim=3 array, or multiple dim=2
 
-        self.η = np.zeros([*size])  # Columnheight/ pressure?
+        self.η = np.ones([*size])  # Columnheight/ pressure?
         self.dη_dt = np.zeros([*size])  # change in Columnehgith / pressure?
 
         self.u = np.zeros([*size])  # Velocity in x direction
@@ -114,20 +113,32 @@ class Surface:
         self.v = np.zeros([*size])  # Velocity in y direction
         self.dv_dt = np.zeros([*size])  # accel? in y direction
 
+        # self.η[rr<10**2] = 1.1 # add a perturbation in pressure surface
+        self.η[100, 100] = 1.1
+
 
     def step(self) -> None:
+        """Execute non-conservative shallow water equations:
+        https://en.wikipedia.org/wiki/Shallow_water_equations"""
         # self.grid[:, :, 0] += self.grid[:, :, 1] * dt  # Add velocity to position
         # self.grid[:, :, 1] += self.grid[:, :, 2] * dt  # Add acceleration to velocity
         # self.grid[:, :, 1] += self.grid[:, :, 2] * dt  # Add acceleration to velocity
         # self.grid[:, :, 1] += self.grid[:, :, 2] * dt  # Add acceleration to velocity
-        b = 0  # todo no idea what b is.
+
         η, u, v = self.η, self.u, self.v  # Code shortener
 
+        H = 0  # H is the mean height of the horizontal pressure surface.
+        b = 0  # b is the viscous drag coefficient.
+
+        # todo η is used here instead of "h: the height deviation of the horizontal
+        # pressure surface from its mean height H".  Why??
         self.du_dt = G * d_dx(η) - b*u
         self.dv_dt = G * d_dy(η) - b*v
-
-        H = 0 #η.mean() - our definition of η includes this term
         self.dη_dt = -d_dx(u * (H + η)) - d_dy(v * (H + η))
+
+        self.η += self.dη_dt * dt
+        self.u += self.du_dt * dt
+        self.v += self.dv_dt * dt
 
 
     def bounce(self, p: Particle) -> None:
@@ -140,34 +151,58 @@ class Surface:
 
         ke = 1/2 * p.mass * p.vz**2
 
-def step(particle: Particle, surface: Surface, t: int) -> Tuple[Particle, Surface, int]:
-    particle.step()
-    grid.step()
-    t += dt
-    return particle, grid, t
 
+def step(particle: Particle, surface: Surface, time: int) -> int:
+    """Execute simple euler time-stepping."""
+    particle.step()
+    surface.step()
+    time += dt
+
+    return time
 
 
 def main():
     surface = Surface(GRID_SIZE)
-    p = Particle(PARTICLE_MASS, *PARTICLE_START)
+    particle = Particle(PARTICLE_MASS, *PARTICLE_START)
     t = 0
 
     x = []
     y = []
     for i in range(RUN_TIME):
-        step(p, surface, t)
+        t = step(particle, surface, t)
 
         # print(p.sx, p.sy, p.sz, p.vx, p.vy, p.vz, p.ax, p.ay, p.az)
         # todo interpolate, instead of taking the nearest one!!
 
         x.append(t)
-        y.append(p.sz)
+        y.append(particle.sz)
 
-        nearest_grid_point = int(round(p.sx)), int(round(p.sy))
-        if p.sz <= surface.η[nearest_grid_point[0], nearest_grid_point[1]]:
-            surface.bounce(p)
-            p.bounce(surface)
+        nearest_grid_point = int(round(particle.sx)), int(round(particle.sy))
+        if particle.sz <= surface.η[nearest_grid_point[0], nearest_grid_point[1]]:
+            surface.bounce(particle)
+            particle.bounce(surface)
 
-    plt.plot(x, y)
+    # plt.plot(x, y)
+    # plt.show()
+
+    im = plt.imshow(surface.η)
+    plt.colorbar(im, orientation='horizontal')
     plt.show()
+
+    return particle, surface
+
+
+
+
+def d_dt_conservative(η, u, v, g):
+    """
+    http://en.wikipedia.org/wiki/Shallow_water_equations#Conservative_form
+    """
+    for x in [η, u, v]: # type check
+        assert isinstance(x, ndarray) and not isinstance(x, matrix)
+
+    dη_dt = -d_dx(η*u) -d_dy(η*v)
+    du_dt = (dη_dt*u - d_dx(η*u**2 + 1./2*g*η**2) - d_dy(η*u*v)) / η
+    dv_dt = (dη_dt*v - d_dx(η*u*v) - d_dy(η*v**2 + 1./2*g*η**2)) / η
+
+    return dη_dt, du_dt, dv_dt
