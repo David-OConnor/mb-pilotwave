@@ -1,9 +1,13 @@
-from collections import namedtuple
 from functools import partial
 from typing import Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+from numpy import pi as π, e, sqrt, cos, sin, exp
+
+from scipy import integrate, special
+
 
 
 # Assume we're not modeling the up and down motions; each simulation tick
@@ -19,23 +23,52 @@ import numpy as np
 # a height above neutral; negative below.
 GRID_SIZE = (200, 200)
 
-VIBRATION_FREQ = 1/100  # vibration cycles per tick?
 RUN_TIME = 7400  # in ticks
-G = -9.81  # Gravity, in m/s^s
-dt = 1/100 # Seconds per tick
+
+dt = 10**-3  # Seconds per tick
 
 PARTICLE_MASS = 1  # Assumed to be a point; ie no volume.
 
 # pos in x, y, height above neutral; respective velocities
-PARTICLE_START = (150, 150, 10, 0, 0, 0, 0, 0, G)  # should probably be G for z accel.
+PARTICLE_START = (150, 150, 10, 0, 0, 0, 0, 0, g)  # should probably be G for z accel.
 x, y = np.mgrid[:GRID_SIZE[0], :GRID_SIZE[1]]
 droplet_x, droplet_y = PARTICLE_START[0], PARTICLE_START[1]
 rr = (x - droplet_x)**2 + (y - droplet_y)**2
+# m/s. Confirm this is a constant. Group vs phase velocity?  Sometimes 'c' isused.
+WAVE_SPEED = 10
 
-WAVE_SPEED = 10  # m/s. Confirm this is a constant. Group vs phase velocity?
+# Added from Drops Walking...
+R0 = 0.39  # Undeformed drop radius.
+ρ = 949  # Silicone oil density (droplet and bed), kg/m^3
+ρa = 1.2  # Air density, kg/m^3
+σ = 20.6e-3  # Surface tension, N/m
+g = -9.81  # Gravity, in m * s^-2.  Paper uses positive value??
+v = 20  # kinematic viscocity, cSt
+μ = 10**-2 # Drop dynamic viscocity. 10**-3 - 10**-1 kg*m^-1*s^-1
+μa = 1.84 * 10**-5  # Air dynamic viscocity. 1.84 * 10**-5 kg*m^-1*s^-1 Constant?
+bath_depth = 9  # mm
+D = 76  # Cylindrical bath container diameter, mm
+γ = 50  # Peak bath vibration acceleration, m * s^-2 0-70
+# Effective gravity is g + γ*sin(τ*f*t)
 
+
+# don't use circle tau here since it's used to mean
+# something different.
+
+f = 100  # Bath shaking frequency.  40 - 200 Hz
+ω = 2 * π * f  # = 2π*f Bath angular frequency.  250 - 1250 rad s^-1
+# ωD = (σ/ρR0^3)^(1/2) Characteristic drop oscillation freq.  300 - 5000s^-1
+ωD = (σ/ρ*R0**3)**(1/2)
+Oh = 1  # Drop Ohnsesorge number. 0.004-2
+Bo = .1  # Bond number.  10**-3 - 0.4
+Ω = 0.7  # Vibration number.  0 - 1.4
+Γ = 3  # Peak non-dimensional bath acceleration.  0 - 7
+# ΓF  From lookup table?
+ΓF = 5.159
 
 # todo do I need accel? Constant down due to g, and bounce accel could be applied instantly??
+
+# todo bouncing: logarithmic spring? from 'Drops walking on a vibrating bath'.
 
 # negative z values are down.
 # Instead of simpler euler method step, use RK4? Either write yourself, or use scipy.integrate??
@@ -98,10 +131,6 @@ d_dy = partial(spatial_derivative, 0)
 
 class Surface:
     def __init__(self, size: Tuple[int, int]):
-        # grid is a n x n x 3 array containing a 2d grid of fluid height(pressure? η?),
-        # vertical velocity, and vertical acceleration.
-        # self.grid = np.zeros([*size, 3])
-
         # todo one dim=3 array, or multiple dim=2
 
         self.η = np.ones([*size])  # Columnheight/ pressure?
@@ -116,15 +145,9 @@ class Surface:
         # self.η[rr<10**2] = 1.1 # add a perturbation in pressure surface
         self.η[100, 100] = 1.1
 
-
     def step(self) -> None:
         """Execute non-conservative shallow water equations:
         https://en.wikipedia.org/wiki/Shallow_water_equations"""
-        # self.grid[:, :, 0] += self.grid[:, :, 1] * dt  # Add velocity to position
-        # self.grid[:, :, 1] += self.grid[:, :, 2] * dt  # Add acceleration to velocity
-        # self.grid[:, :, 1] += self.grid[:, :, 2] * dt  # Add acceleration to velocity
-        # self.grid[:, :, 1] += self.grid[:, :, 2] * dt  # Add acceleration to velocity
-
         η, u, v = self.η, self.u, self.v  # Code shortener
 
         H = 0  # H is the mean height of the horizontal pressure surface.
@@ -132,14 +155,13 @@ class Surface:
 
         # todo η is used here instead of "h: the height deviation of the horizontal
         # pressure surface from its mean height H".  Why??
-        self.du_dt = G * d_dx(η) - b*u
-        self.dv_dt = G * d_dy(η) - b*v
+        self.du_dt = g * d_dx(η) - b * u
+        self.dv_dt = g * d_dy(η) - b * v
         self.dη_dt = -d_dx(u * (H + η)) - d_dy(v * (H + η))
 
         self.η += self.dη_dt * dt
         self.u += self.du_dt * dt
         self.v += self.dv_dt * dt
-
 
     def bounce(self, p: Particle) -> None:
         """Perfectly elastic?"""
@@ -166,16 +188,16 @@ def main():
     particle = Particle(PARTICLE_MASS, *PARTICLE_START)
     t = 0
 
-    x = []
-    y = []
+    x_ = []
+    y_ = []
     for i in range(RUN_TIME):
         t = step(particle, surface, t)
 
         # print(p.sx, p.sy, p.sz, p.vx, p.vy, p.vz, p.ax, p.ay, p.az)
         # todo interpolate, instead of taking the nearest one!!
 
-        x.append(t)
-        y.append(particle.sz)
+        x_.append(t)
+        y_.append(particle.sz)
 
         nearest_grid_point = int(round(particle.sx)), int(round(particle.sy))
         if particle.sz <= surface.η[nearest_grid_point[0], nearest_grid_point[1]]:
@@ -198,11 +220,78 @@ def d_dt_conservative(η, u, v, g):
     """
     http://en.wikipedia.org/wiki/Shallow_water_equations#Conservative_form
     """
-    for x in [η, u, v]: # type check
-        assert isinstance(x, ndarray) and not isinstance(x, matrix)
 
     dη_dt = -d_dx(η*u) -d_dy(η*v)
     du_dt = (dη_dt*u - d_dx(η*u**2 + 1./2*g*η**2) - d_dy(η*u*v)) / η
     dv_dt = (dη_dt*v - d_dx(η*u*v) - d_dy(η*v**2 + 1./2*g*η**2)) / η
 
     return dη_dt, du_dt, dv_dt
+
+
+############
+
+
+
+def wave(r: float, t: float):
+    # Return wave height at a given distance and time from the epicenter.
+
+    speed = 5
+    peak_height = 1
+    c = .05  # effects falloff distance.
+
+    peak_d = speed * t
+
+    # Super rough approx:
+    dist_from_peak = abs(peak_d - r)
+    return peak_height * e ** (-c*dist_from_peak)
+
+
+def surface_height(r, t):
+    """From paper. No idea what half it means!"""
+    # This appears to be an analytic solution. No need for numerical??
+    τ = ωD * t
+    # todo what is μe??? Not defined in paper, but used.
+
+    Ohe = μe / (σ*ρ*R0)**(1/2)  #  μe / (σρR0)**(1/2) Effective Ohnesorge number
+    # Use the lookup table for these values??
+    τF = 1.303
+    τC = 0
+    τD = 1.303
+    kC = .888
+    kF = .888
+
+    term1 = (4*sqrt(2*π))/(3*sqrt(τ)) * (kC**2*kF*Ohe**(1/2))/(3*kF**2 + Bo)
+
+    term2 =
+
+    term3 = cos(Ω/2) * exp((Γ/ΓF - 1) * (τ/τD)) * special.j0(kC*r)
+
+    # Note: THere's a more "complete" version in the paper as well.
+
+def wave_field():
+    h = np.empty([500, 500])
+    t = 2
+
+    for i in range(500):
+        for j in range(500):
+
+            r = ((250-i)**2 + (250-j)**2) ** .5
+            h[i, j] = wave(r, t)
+
+    plt.imshow(h)
+    return h
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
