@@ -2,6 +2,7 @@ from functools import partial
 from typing import Tuple
 
 import matplotlib.pyplot as plt
+import numba
 import numpy as np
 
 from numpy import pi as π, e, sqrt, cos, sin, exp
@@ -28,14 +29,6 @@ RUN_TIME = 7400  # in ticks
 dt = 10**-3  # Seconds per tick
 
 PARTICLE_MASS = 1  # Assumed to be a point; ie no volume.
-
-# pos in x, y, height above neutral; respective velocities
-PARTICLE_START = (150, 150, 10, 0, 0, 0, 0, 0, g)  # should probably be G for z accel.
-x, y = np.mgrid[:GRID_SIZE[0], :GRID_SIZE[1]]
-droplet_x, droplet_y = PARTICLE_START[0], PARTICLE_START[1]
-rr = (x - droplet_x)**2 + (y - droplet_y)**2
-# m/s. Confirm this is a constant. Group vs phase velocity?  Sometimes 'c' isused.
-WAVE_SPEED = 10
 
 # Added from Drops Walking...
 R0 = 0.39  # Undeformed drop radius.
@@ -65,6 +58,15 @@ Bo = .1  # Bond number.  10**-3 - 0.4
 Γ = 3  # Peak non-dimensional bath acceleration.  0 - 7
 # ΓF  From lookup table?
 ΓF = 5.159
+
+
+# pos in x, y, height above neutral; respective velocities
+PARTICLE_START = (150, 150, 10, 0, 0, 0, 0, 0, g)  # should probably be G for z accel.
+x, y = np.mgrid[:GRID_SIZE[0], :GRID_SIZE[1]]
+droplet_x, droplet_y = PARTICLE_START[0], PARTICLE_START[1]
+rr = (x - droplet_x)**2 + (y - droplet_y)**2
+# m/s. Confirm this is a constant. Group vs phase velocity?  Sometimes 'c' isused.
+WAVE_SPEED = 10
 
 # todo do I need accel? Constant down due to g, and bounce accel could be applied instantly??
 
@@ -249,39 +251,77 @@ def wave(r: float, t: float):
 def surface_height(r, t):
     """From paper. No idea what half it means!"""
     # This appears to be an analytic solution. No need for numerical??
-    τ = ωD * t
+    τ = ωD * t  # dimensionless time.
     # todo what is μe??? Not defined in paper, but used.
 
-    Ohe = μe / (σ*ρ*R0)**(1/2)  #  μe / (σρR0)**(1/2) Effective Ohnesorge number
+    # Ohe is the effective Ohnesorge number. # todo what is mu e??
+    # Ohe = μe / (σ*ρ*R0)**(1/2)  # μe / (σρR0)**(1/2)  # or OhD ?
+    Ohe = μ / (σ*ρ*R0)**(1/2)  # μe / (σρR0)**(1/2)  # or OhD ?
+
+
     # Use the lookup table for these values??
-    τF = 1.303
-    τC = 0
-    τD = 1.303
-    kC = .888
+    τF = 1.303  # Faraday period.
+    τC = 0  # Contact time? Dimensionless?? 1-20ms ??
+    τD = 1.303  # Decay time
+    kC = .888  # Also given by a formula... (3.8)
     kF = .888
+
+    # F = 0  # Dimensionless reaction force.
 
     term1 = (4*sqrt(2*π))/(3*sqrt(τ)) * (kC**2*kF*Ohe**(1/2))/(3*kF**2 + Bo)
 
-    term2 =
+    # Term 2 represents the amplitude of the wave.
+    # term2 = integrate(F(u) * sin(Ω*u/2) * du)
+    term2 = 1
 
     term3 = cos(Ω/2) * exp((Γ/ΓF - 1) * (τ/τD)) * special.j0(kC*r)
 
-    # Note: THere's a more "complete" version in the paper as well.
 
-def wave_field():
-    h = np.empty([500, 500])
-    t = 2
+    # Note: todo this is a start at the more "complete" version in the paper.
+    # term1 = (4*sqrt(2*π))/(3) * (kC**2*kF*Ohe**(1/2))/(3*kF**2 + Bo)
+    # term2 =
+    # term3 = H(τ)/sqrt(τ) * exp((Γ/ΓF - 1) * (τ/τD)) * special.j0(kC*r)
+
+    return term1 * term2 * term3
+
+
+def wave_field(t=2, origin=(250, 250)):
+    """Calculate a wave's effecton a 2d field."""
+    h = np.zeros([500, 500])
+
+    x_origin, y_origin = origin
+    pixel_dist = 10
 
     for i in range(500):
         for j in range(500):
+            r = ((y_origin-i)**2 + (x_origin-j)**2) ** .5
+            r /= pixel_dist
+            # Assuming we can just add the heights.
+            h[i, j] += surface_height(r, t)
 
-            r = ((250-i)**2 + (250-j)**2) ** .5
-            h[i, j] = wave(r, t)
+    # # This style uses broadcasting. Stumbling block on surface height ufunc.
+
+    # y, x = np.mgrid[:500, :500]
+    # r = sqrt((x_origin - x)**2 + (y_origin - y)**2)
+    # h = surface_height(r, t)  # does surfaceheight need to be a ufunc? yes.
 
     plt.imshow(h)
     return h
 
 
+def plot_surface(z: np.ndarray) -> None:
+    """Make a surface plot from a 2d array."""
+    from mpl_toolkits.mplot3d import Axes3D
+    from matplotlib import cm
+
+    y, x = np.mgrid[:z.shape[0], :z.shape[1]]
+
+    fig = plt.figure()
+    ax = fig.gca(projection='3d')
+    ax.plot_surface(x, y, z, cmap=cm.viridis, linewidth=.2, cstride=10, rstride=10)
+
+    plt.tight_layout(rect=(0, 0, 1, 1))
+    plt.show()
 
 
 
