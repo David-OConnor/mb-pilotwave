@@ -1,5 +1,6 @@
+from collections import namedtuple
 from functools import partial
-from typing import Tuple
+from typing import Tuple, Iterable
 
 import matplotlib.pyplot as plt
 import numba
@@ -10,6 +11,7 @@ from numpy import pi as π, e, sqrt, cos, sin, exp
 from scipy import integrate, special
 
 
+jit = numba.jit(nopython=True)
 
 # Assume we're not modeling the up and down motions; each simulation tick
 # represents the particle impacting the grid
@@ -26,7 +28,7 @@ GRID_SIZE = (200, 200)
 
 RUN_TIME = 7400  # in ticks
 
-dt = 10**-3  # Seconds per tick
+dt = 10e-2  # Seconds per tick
 
 PARTICLE_MASS = 1  # Assumed to be a point; ie no volume.
 
@@ -216,8 +218,6 @@ def main():
     return particle, surface
 
 
-
-
 def d_dt_conservative(η, u, v, g):
     """
     http://en.wikipedia.org/wiki/Shallow_water_equations#Conservative_form
@@ -232,23 +232,12 @@ def d_dt_conservative(η, u, v, g):
 
 ############
 
+# an Impact is an event of the drop hitting the surface.
+Impact = namedtuple('Impact', ['t', 'x', 'y'])  # Add other aspects like speed, force etc.
 
 
-def wave(r: float, t: float):
-    # Return wave height at a given distance and time from the epicenter.
-
-    speed = 5
-    peak_height = 1
-    c = .05  # effects falloff distance.
-
-    peak_d = speed * t
-
-    # Super rough approx:
-    dist_from_peak = abs(peak_d - r)
-    return peak_height * e ** (-c*dist_from_peak)
-
-
-def surface_height(r, t):
+@jit
+def surface_height_inner(t: float, r: float) -> float:
     """From paper. No idea what half it means!"""
     # This appears to be an analytic solution. No need for numerical??
     τ = ωD * t  # dimensionless time.
@@ -274,8 +263,7 @@ def surface_height(r, t):
     # term2 = integrate(F(u) * sin(Ω*u/2) * du)
     term2 = 1
 
-    term3 = cos(Ω/2) * exp((Γ/ΓF - 1) * (τ/τD)) * special.j0(kC*r)
-
+    term3 = cos(Ω/2) * exp((Γ/ΓF - 1) * (τ/τD))  # * special.j0(kC*r)
 
     # Note: todo this is a start at the more "complete" version in the paper.
     # term1 = (4*sqrt(2*π))/(3) * (kC**2*kF*Ohe**(1/2))/(3*kF**2 + Bo)
@@ -285,7 +273,58 @@ def surface_height(r, t):
     return term1 * term2 * term3
 
 
-def wave_field(t=2, origin=(250, 250)):
+def surface_height(t: float, r: float) -> float:
+    """Workaround for scipy.special.j0 not working in numba; @jit the rest,
+    then multiply by the j0 bessel function separately."""
+    kC = .888
+    return surface_height_inner(t, r) * special.j0(kC*r)
+
+
+# @jit
+def surface_height_derivative(t, x, y, impact: Impact) -> Tuple[float, float]:
+    """Create a linear approximation, for finding the slope at a point.
+    x and y are points.  t is
+    the time we're taking the derivative."""
+    # todo perhaps you should take into account higher order effects.
+    δ = 10e-5  # Should this be fixed?
+
+    t_since_impact = t - impact.t  # We care about time since impact.
+
+    x_dist, y_dist = x - impact.x, y - impact.y
+
+    # Take a sample on each side of the location we're testing.
+
+    # Calculate the radiuses.
+    r_x_left = (y_dist ** 2 + (x_dist - δ) ** 2) ** .5
+    r_x_right = (y_dist ** 2 + (x_dist + δ) ** 2) ** .5
+    r_y_left = ((y_dist - δ) ** 2 + x_dist ** 2) ** .5
+    r_y_right = ((y_dist + δ) ** 2 + x_dist ** 2) ** .5
+
+    m = 10
+
+    r_x_left /= m
+    r_x_right /= m
+    r_y_left /= m
+    r_y_right /= m
+
+    func = partial(surface_height, t_since_impact)
+
+    h_x_left = func(r_x_left)
+    h_x_right = func(r_x_right)
+    h_y_left = func(r_y_left)
+    h_y_right = func(r_y_right)
+
+    # # Numba contingency; avoid partial. lambda ok or not?
+    # h_x_left = surface_height(t_since_impact, r_x_left)
+    # h_x_right = surface_height(t_since_impact, r_x_right)
+    # h_y_left = surface_height(t_since_impact, r_y_left)
+    # h_y_right = surface_height(t_since_impact, r_y_right)
+
+    # todo check signs!
+    return (h_x_right - h_x_left) / δ, (h_y_right - h_y_left) / δ
+
+
+def wave_field(t: float=2, origin=(250, 250)) -> np.ndarray:
     """Calculate a wave's effecton a 2d field."""
     h = np.zeros([500, 500])
 
@@ -297,16 +336,47 @@ def wave_field(t=2, origin=(250, 250)):
             r = ((y_origin-i)**2 + (x_origin-j)**2) ** .5
             r /= pixel_dist
             # Assuming we can just add the heights.
-            h[i, j] += surface_height(r, t)
+            h[i, j] += surface_height(t, r)
 
     # # This style uses broadcasting. Stumbling block on surface height ufunc.
-
     # y, x = np.mgrid[:500, :500]
     # r = sqrt((x_origin - x)**2 + (y_origin - y)**2)
     # h = surface_height(r, t)  # does surfaceheight need to be a ufunc? yes.
 
-    plt.imshow(h)
     return h
+
+impacts = []
+
+
+def int_func(y: Iterable, t: np.ndarray):
+    xs, ys, zs, xv, yv, zv, xa, ya, za, h = y
+
+    # waves = wave_field(t)
+    # _p means prime; ie derivative
+    xs_p, ys_p, zs_p = xv*dt, yv*dt, zv*dt
+    xv_p, yv_p, zv_p = xa*dt, ya*dt, za*dt
+    xa_p, ya_p, za_p = 0, 0, 0
+
+    # h = h * wave_field(t)
+    h_p = 0
+
+    surface_grad = np.gradient(h_p)
+
+    # This doesn't belong here...
+    if 1 == 1:
+        impacts.append(Impact(t, xs, ys))
+
+    dydt = xs_p, ys_p, zs_p, xv_p, yv_p, zv, xa_p, ya_p, za_p, h_p
+    return dydt
+
+
+def integrate_test():
+    # y0 is Drop xs, ys, zs, xv, yv, zv, xa, ya, za, surface
+    y0 = 150, 200, 10, 0, 0, 0, 0, 0, g, 69
+    t = np.arange(10)
+    results = integrate.odeint(int_func, y0, t)
+
+    return results
 
 
 def plot_surface(z: np.ndarray) -> None:
@@ -322,16 +392,3 @@ def plot_surface(z: np.ndarray) -> None:
 
     plt.tight_layout(rect=(0, 0, 1, 1))
     plt.show()
-
-
-
-
-
-
-
-
-
-
-
-
-
