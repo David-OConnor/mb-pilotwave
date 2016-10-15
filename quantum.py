@@ -82,6 +82,9 @@ Impact = namedtuple('Impact', ['t', 'x', 'y', 'F'])  # Add other aspects like sp
 
 impacts = []
 
+class IntegrationEvent(Exception):
+    pass
+
 
 @jit
 def surface_height(t: float, r: float, F: float) -> float:
@@ -122,21 +125,24 @@ def surface_height(t: float, r: float, F: float) -> float:
     return term1 * term2 * term3
 
 
-@jit
 def net_surface_height(t: float, x: float, y: float, impacts_: Iterable) -> float:
     """Finds the height, taking into account multiple impacts."""
     # todo add a limiter so old impacts aren't included; they're insignificant,
     # todo and we need to computationally limit the num of impacts.
+    # This could possibly be jitted by replacing the Impacts list/object with a 2d array.
+
     height_below_drop = 0
 
     for impact_ in impacts_:
         t_since_impact = t - impact_.t  # We care about time since impact.
+        if t_since_impact == 0:
+            continue
+
         r = ((impact_.x - x)**2 + (impact_.y - y)**2) ** 0.5
         height_below_drop += surface_height(t_since_impact, r, impact_.F)
     return height_below_drop
 
 
-@jit
 def surface_height_gradient(t, x, y, impacts_: Iterable[Impact]) -> Tuple[float, float]:
     """Create a linear approximation, for finding the slope at a point.
     x and y are points.  t is the time we're taking the derivative.
@@ -175,9 +181,9 @@ def bounce_v(grad_x, grad_y, vx, vy, vz):
     reflection = v - 2*(v @ unit_normal)*unit_normal
 
     # print(reflection, "reflect")
-    print(grad_x, grad_y, vx, vy, vz, "inputs")
-    print(unit_normal, v, "normal, v")
-    print(reflection, "REF")
+    # print(grad_x, grad_y, vx, vy, vz, "inputs")
+    # print(unit_normal, v, "normal, v")
+    # print(reflection, "REF")
     return reflection
 
 #
@@ -244,7 +250,15 @@ def rk4_ode(f, y0, t):
 
         t_ = t[i]
         h = t[i+1] - t[i]
-        y = rk4(f, y, t_, h)
+        try:
+            y = rk4(f, y, t_, h)
+        except IntegrationEvent as event:
+            y_restart = event.args[0]
+            y = y_restart
+            print(y_restart, "RESTARTING...")
+            # todo handle restarting after a bounce here, or just return what
+            # todo we have, and continue in a loop outside?
+            # break
 
     result[-1] = y
     return result
@@ -252,47 +266,44 @@ def rk4_ode(f, y0, t):
 
 def int_rhs(y: Iterable, t: float) -> Tuple:
     """Right hand integration function."""
-    sx, sy, sz, vx, vy, vz, xa, ya, az = y
-
+    # bounce_detect is coded as part of our custom rk4 method; only check  during
+    # one part of that integration.
+    sx, sy, sz, vx, vy, vz, ax, ay, az = y
     # _p means prime; ie derivative
 
     # todo only invoke bounce-detection logic if drop's below a certain height,
     # todo for computational efficiency?
-    height_below_drop = net_surface_height(t, sx, sy, impacts)
-    #
-    # if sz <= height_below_drop:
-    #     print("Bounce:", sz, height_below_drop)
-    #
-    #     grad_x, grad_y = surface_height_gradient(t, sx, sy, impacts)
-    #     vx_new, vy_new, vz_new = bounce_v(grad_x, grad_y, vx, vy, vz)
-    #
-    #     # This functions outputs are assumed by the change in one unit t;
-    #     # We calculated actual new velocities;  convert to dy/dt format.
-    #     vx_p, vy_p, vz_p = vx_new - vx, vy_new - vy, vz_new-vz
-    #
-    #     # Add this new impact for future calculations.
-    #     F = .1  # todo i don't know what to do here.
-    #     impacts.append(Impact(t, sx, sy, F))
-    #
-    # else:
-    #     # pass
-    #     # If no impact, calculate velocities as usual.
 
-    vx_p, vy_p, vz_p = xa * dt, ya * dt, az * dt
+    # The limit on sz is to prevent calling net_surface_height when the ball's
+    # no where near bouncing; the vz check is a fudge for the ball being detected
+    # a bit below the surface; dont' catch it on the way up.
+    if sz <= 10 and vz < 0:  # todo lower sz limit.
+        height_below_drop = net_surface_height(t, sx, sy, impacts)
 
-    sz_p = vz * dt
+        if sz <= height_below_drop:  # A bounce is detected.
+            print("Bounce:", t, sz, vz, height_below_drop)
 
-    sx_p, sy_p = vx*dt, vy*dt
+            grad_x, grad_y = surface_height_gradient(t, sx, sy, impacts)
+            vx_new, vy_new, vz_new = bounce_v(grad_x, grad_y, vx, vy, vz)
+
+            # Add this new impact for future calculations.
+            F = .1  # todo i don't know what to do here.
+            impacts.append(Impact(t, sx, sy, F))
+            y = sx, sy, sz, vx_new, vy_new, vz_new, ax, ay, az
+            raise IntegrationEvent(y)
+
+    sx_p, sy_p, sz_p = vx, vy, vz
+    vx_p, vy_p, vz_p = ax, ay, az
     ax_p, ay_p, az_p = 0, 0, 0
 
-    dydt = sx_p, sy_p, sz_p, vx_p, vy_p, vz_p, ax_p, ay_p, az_p
-    return dydt
+    # Return the effective dy/dt; a collection of all values change per time.
+    return sx_p, sy_p, sz_p, vx_p, vy_p, vz_p, ax_p, ay_p, az_p
 
 
-def integrate():
+def integrate_run():
     # y0 is Drop ss, sy, sz, vx, vy, vz, ax, ay, az
     y0 = 150, 200, 10, 0, 0, 0, 0, 0, g
-    t = np.linspace(0, 20, 200)
+    t = np.linspace(0, 10, 50)
     return rk4_ode(int_rhs, y0, t)
     # return integrate.odeint(int_rhs, y0, t)
 
