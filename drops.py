@@ -131,7 +131,8 @@ def net_surface_height(t: float, x: float, y: float, impacts_: Iterable) -> floa
 
     for impact_ in impacts_:
         t_since_impact = t - impact_.t  # We care about time since impact.
-        # Excluse impacts that occur after, or simulataneously with the current time.
+        # Exclusd impacts that occur after, or simulataneously with the current time.
+
         if t_since_impact <= 0:
             continue
 
@@ -181,6 +182,12 @@ def bounce_v(grad_x: float, grad_y: float, vx: float, vy: float, vz: float) -> n
     return reflection
 
 
+def drag(v: float):
+    CD = .58  # really this varies! Usually between 0.2 and 0.5
+    A = π * R0 ** 2  # Cross-sectional area of undeformed drop.
+    return (CD * ρa * A * v**2) / 2
+
+
 # @jit
 def rk4(f, y: Iterable, t: float, h: float, args: Tuple) -> np.ndarray:
     """Basic mechanics of Runge-Kutta 4 ODE"""
@@ -198,12 +205,13 @@ def rk4_odeint(f, y0: Iterable, t: np.ndarray, args: Tuple=()) -> np.ndarray:
     """Interface for RK4 ODE solver, similar to scipy.integrate.odeint."""
     y0 = np.array(y0)
     result = np.empty([len(t), len(y0)])
-    y = y0
-    for i in range(len(t) - 1):
-        result[i] = y
 
-        t_ = t[i]
-        h = t[i+1] - t[i]
+    y = y0
+    result[0] = y
+
+    for i in range(len(t) - 1):
+        t_ = t[i]  # current  time
+        h = t[i+1] - t[i]  # time step
         try:
             y = rk4(f, y, t_, h, args)
         except IntegrationEvent as event:
@@ -212,55 +220,149 @@ def rk4_odeint(f, y0: Iterable, t: np.ndarray, args: Tuple=()) -> np.ndarray:
             y = event.args[0]
             # todo handle restarting after a bounce here, or just return what
             # todo we have, and continue in a loop outside?
+            # break
 
-    result[-1] = y
+        result[i+1] = y
     return result
 
 
-def drag(v: float):
-    CD = .58  # really this varies! Usually between 0.2 and 0.5
-    A = π * R0 ** 2  # Cross-sectional area of undeformed drop.
-    return (CD * ρa * A * v**2) / 2
-
-
-def ode_rhs(y: Iterable, t: float) -> Tuple:
+def ode_rhs(y: np.ndarray, t: float, drop_len: int) -> Tuple:
     """Right hand integration function."""
+    drops = y.reshape(-1, drop_len)
+    dy_dx = []
+
+    for drop in drops:
+        sx, sy, sz, vx, vy, vz = drop
+        ax, ay, az = 0, 0, g
+
+        # The limit on sz is to prevent calling net_surface_height when the ball's
+        # no where near bouncing; the vz check is a fudge for the ball being detected
+        # a bit below the surface; dont' catch it on the way up.
+        if sz <= 10 and vz < 0:  # todo lower sz limit.
+            height_below_drop = net_surface_height(t, sx, sy, impacts)
+
+            if sz <= height_below_drop:  # A bounce is detected.
+                print('bounce', sz, height_below_drop)
+                grad_x, grad_y = surface_height_gradient(t, sx, sy, impacts)
+                # This bounce velocity change overrides the default, of last step's accel.
+                vx_bounce, vy_bounce, vz_bounce = bounce_v(grad_x, grad_y, vx, vy, vz)
+
+                # Add this new impact for future calculations.
+                F = .01  # todo i don't know what to do here.
+                impacts.append(Impact(t, sx, sy, F))
+
+
+                y = sx, sy, sz, vx_bounce, vy_bounce, vz_bounce
+                raise IntegrationEvent(y)
+
+        # todo fudge factors giving an approx of air resistance.
+        # ax_p = drag(vx) / m
+        # ay_p = drag(vy) / m
+        # az_p = drag(vz) / m
+
+        # Append to a 1d array (or list) which we'll output.
+        dy_dx.extend([vx, vy, vz, ax, ay, az])
+
+    return dy_dx
+
+
+def ode_rhs_simple(y: np.ndarray, t: np.ndarray) -> Tuple:
+    """Right hand integration function, simplified for one drop; no bounce"""
     sx, sy, sz, vx, vy, vz = y
     ax, ay, az = 0, 0, g
-
-    # The limit on sz is to prevent calling net_surface_height when the ball's
-    # no where near bouncing; the vz check is a fudge for the ball being detected
-    # a bit below the surface; dont' catch it on the way up.
-    if sz <= 10 and vz < 0:  # todo lower sz limit.
-        height_below_drop = net_surface_height(t, sx, sy, impacts)
-
-        if sz <= height_below_drop:  # A bounce is detected.
-            grad_x, grad_y = surface_height_gradient(t, sx, sy, impacts)
-            vx, vy, vz = bounce_v(grad_x, grad_y, vx, vy, vz)
-
-            # Add this new impact for future calculations.
-            F = 3  # todo i don't know what to do here.
-            impacts.append(Impact(t, sx, sy, F))
-            y = sx, sy, sz, vx, vy, vz, ax, ay, az
-            raise IntegrationEvent(y)
-
-    # todo fudge factors giving an approx of air resistance.
-    # ax_p = drag(vx) / m
-    # ay_p = drag(vy) / m
-    # az_p = drag(vz) / m
 
     return vx, vy, vz, ax, ay, az
 
 
-def integrate_run() -> np.ndarray:
-    # y0 is Drop sx, sy, sz, vx, vy, vz, ax, ay, az
-    y0 = 150, 200, 10, .8, .3, 0
-    t = np.linspace(0, 30, 4000)
+def run() -> np.ndarray:
+    # y0 is Drop sx, sy, sz, vx, vy, vz
+    drops_initial = np.array([
+        [100, 100, 10, 0, 0, 0],
+        # [100, 105, 10, 0, 0, 0],
+        # [100, 95, 10, 0, 0, 0],
+        # [105, 100, 10, 0, 0, 0],
+        # [105, 105, 10, 0, 0, 0],
+        # [105, 95, 10, 0, 0, 0],
+        # [95, 100, 10, 0, 0, 0],
+        # [95, 105, 10, 0, 0, 0],
+        # [95, 95, 10, 0, 0, 0],
+
+    ])
+
+    n_drops, drop_len = drops_initial.shape
+
+    # Integrators take 1d arrays by convention.
+    y0 = drops_initial.flatten()
+
+    t = np.linspace(0, 20, 400)
 
     global impacts
     impacts = []
     # return integrate.odeint(ode_rhs, y0, t)
-    return rk4_odeint(ode_rhs, y0, t), t, impacts
+    return rk4_odeint(ode_rhs, y0, t, args=(drop_len,)), t, impacts
+
+
+def ode_standalone(t: np.ndarray) -> Tuple:
+    """Purpose-built, non-general RK4 integrator for modelling multiple drops,
+    with events. Events with one drop, or multiple drops with no events work
+    with more elegant solutions, like scipy's odeint or the rk4_odeint above."""
+
+    impacts_ = []
+
+    # initial drop conditions.
+    drops = np.array([
+        [100, 100, 10, 0, 0, 0],
+        [100, 105, 12, 0, 0, 0],
+        [100, 95, 10, 0, 0, 0],
+        [105, 100, 10, 0, 0, 0],
+        [105, 105, 10, 0, 0, 0],
+        [105, 95, 10, 0, 0, 0],
+        [95, 100, 10, 0, 0, 0],
+        [95, 105, 10, 0, 0, 0],
+        [95, 95, 10, 0, 0, 0],
+
+    ])
+
+    num_drops, drop_len = drops.shape
+
+    result = np.empty([len(t), num_drops, drop_len])
+    result[0] = drops
+
+    for i in range(len(t) - 1):
+        t_ = t[i]  # current  time
+        h = t[i + 1] - t[i]  # time step
+
+        for j in range(num_drops):
+            y_to_integrate = result[i, j]  # todo ??
+            sx, sy, sz, vx, vy, vz = y_to_integrate
+
+            if sz <= 10 and vz < 0:  # todo lower sz limit.
+                height_below_drop = net_surface_height(t_, sx, sy, impacts_)
+
+                if sz <= height_below_drop:  # A bounce is detected.
+                    grad_x, grad_y = surface_height_gradient(t_, sx, sy,
+                                                             impacts_)
+                    # This bounce velocity change overrides the default, of last step's accel.
+                    vx_bounce, vy_bounce, vz_bounce = bounce_v(grad_x, grad_y,
+                                                               vx, vy, vz)
+
+                    # Add this new impact for future calculations.
+                    F = .04  # todo i don't know what to do here.
+                    impacts_.append(Impact(t_, sx, sy, F))
+
+                    y_drop = sx, sy, sz, vx_bounce, vy_bounce, vz_bounce
+
+                else:
+                    y_drop = rk4(ode_rhs_simple, y_to_integrate, t_, h, args=())  # no bounce
+            else:
+                y_drop = rk4(ode_rhs_simple, y_to_integrate, t_, h, args=())  # no bounce
+
+            result[i+1, j] = y_drop
+
+    return result, impacts_
+
+
+
 
 
 def skode_test():

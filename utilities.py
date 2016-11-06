@@ -4,22 +4,32 @@ import numba
 import numpy as np
 from matplotlib import pyplot as plt
 
-import quantum
+import drops
 
 
-def wave_field(t: float, impacts: Iterable[quantum.Impact], plot=True) -> np.ndarray:
+def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1, plot=True) -> np.ndarray:
     """Calculate a wave's effect on a 2d field."""
-    h = np.zeros([500, 500])
+    # Be careful about resolution; computation time is proportional to its square, I think.
+    grid_width = 200
+    grid_height = 200
+    array_width = grid_width * resolution
+    array_height = grid_height * resolution
 
-    for i in range(500):
-        for j in range(500):
-            h[i, j] = quantum.net_surface_height(t, j, i, impacts)
+    h = np.zeros([array_height, array_width])
+
+    for i in range(array_height):
+        for j in range(array_width):
+            h[i, j] = drops.net_surface_height(t, j/resolution, i/resolution, impacts)
 
     if plot:
         plt.imshow(h)
         # plot_surface(h)
 
     return h
+
+
+"""
+impacts = [drops.Impact(10, 100, 100, 1), drops.Impact(10, 100, 105, 1), drops.Impact(10, 100, 95, 1), drops.Impact(10, 105, 100, 1), drops.Impact(10, 105, 105, 1), drops.Impact(10, 105, 95, 1), drops.Impact(10, 95, 100, 1), drops.Impact(10, 95, 105, 1), drops.Impact(10, 95, 95, 1)]"""
 
 
 def plot_path(result: np.ndarray) -> None:
