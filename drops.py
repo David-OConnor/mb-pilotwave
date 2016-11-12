@@ -1,4 +1,5 @@
 from collections import namedtuple
+from functools import partial
 from typing import Tuple, Iterable
 
 # import PyDSTool
@@ -8,7 +9,7 @@ import numba
 import numpy as np
 import scikits.odes
 import scikits.odes.sundials
-from numpy import pi as π, sqrt, cos, sin, exp
+from numpy import pi as π, sqrt, cos, sin, tan, arctan2, exp
 from scikits.odes import dae
 from scikits.odes.sundials import ida
 
@@ -52,7 +53,7 @@ D = 76  # Cylindrical bath container diameter, mm
 # something different.
 
 f = 100  # Bath shaking frequency.  40 - 200 Hz
-ω = 2 * π * f  # = 2π*f Bath angular frequency.  250 - 1250 rad s^-1
+ω = 2*π * f  # = 2π*f Bath angular frequency.  250 - 1250 rad s^-1
 # ωD = (σ/ρR0^3)^(1/2) Characteristic drop oscillation freq.  300 - 5000s^-1
 ωD = (σ/ρ*R0**3)**(1/2)
 Oh = 1  # Drop Ohnsesorge number. 0.004-2
@@ -84,9 +85,11 @@ class IntegrationEvent(Exception):
 
 @jit
 def surface_height(t: float, r: float, F: float) -> float:
-    """From 'Drops Walking on a vibrating Bath'."""
-    # Analytic solution for surface height, based on one impact.
-    τ = ωD * t  # dimensionless time.
+    """From 'Drops Walking on a vibrating Bath'. Analytic solution for surface
+    height, based on one impact. The results can be added to take into account multiple
+    impacts."""
+    #
+    τ = ωD * t  # τ is dimensionless time, not 2*pi !!
     # todo what is μe??? Not defined in paper, but used.
 
     # Ohe is the effective Ohnesorge number. # todo what is mu e??
@@ -121,7 +124,7 @@ def surface_height(t: float, r: float, F: float) -> float:
     return term1 * term2 * term3
 
 
-def net_surface_height(t: float, x: float, y: float, impacts_: Iterable) -> float:
+def net_surface_height(t: float, impacts_: Iterable, x: float, y: float, reflectivity=1) -> float:
     """Finds the height, taking into account multiple impacts."""
     # todo add a limiter so old impacts aren't included; they're insignificant,
     # todo and we need to computationally limit the num of impacts.
@@ -129,37 +132,100 @@ def net_surface_height(t: float, x: float, y: float, impacts_: Iterable) -> floa
 
     height_below_drop = 0
 
-    for impact_ in impacts_:
-        t_since_impact = t - impact_.t  # We care about time since impact.
-        # Exclusd impacts that occur after, or simulataneously with the current time.
+    for impact in impacts_:
+        t_since_impact = t - impact.t  # We care about time since impact.
+        # Exclude impacts that occur after, or simulataneously with the current time.
 
         if t_since_impact <= 0:
             continue
 
-        r = ((impact_.x - x)**2 + (impact_.y - y)**2) ** 0.5
-        height_below_drop += surface_height(t_since_impact, r, impact_.F)
+        Δx, Δy = x - impact.x, y - impact.y
+        point_dist = (Δx**2 + Δy**2) ** 0.5
+
+        # 'height' is the base, ie non-reflected-component height.
+        height = surface_height(t_since_impact, point_dist, impact.F)
+
+        # todo this doesn't even belong in this func; ie see wall reflection??
+        if point_dist > 50:  # todo btw this also only works on a corral....
+            height *= 1 - reflectivity
+
+        height_below_drop += height
+        if point_dist <= 50:
+            # todo temp reflection calc!
+            height_below_drop += wall_reflection(impact, t_since_impact, Δx, Δy, point_dist, reflectivity)
+
+            pass
     return height_below_drop
 
 
-def surface_height_gradient(t, x, y, impacts_: Iterable[Impact]) -> Tuple[float, float]:
+def wall_reflection(impact, t_since_impact, Δx, Δy, point_dist, reflectivity, n_reflections=1):
+    """Experimental!"""
+    # n_reflections controls how many walls to bounce off of.
+
+    # todo model circle with radius 50, centered on 0, 0
+
+    # todo as of now, you're modeling in cartesian coordinates starting at 0, 0
+    # todo no more array-based indexing from top-left!
+    # todo attempt at collision detection:
+    # Angle between the impact origin, and the location we're examining.
+    θ_point = arctan2(Δy, Δx)
+
+    wall_dist = 50  # todo this only works with a circle!
+
+    # Don't calc reflections for points beyond this wall going in this direction.
+    if point_dist > wall_dist:  # todo again, this only works for a circle.
+        return 0
+
+    θ_wall = (θ_point + (2*π)/4) % (2*π) # todo this only works with a circle!
+    # todo perhaps this works for circle, but you could generalize this now
+    # todo including wall angle.
+
+    # Find the height at this distance, reflect it back over by adding.
+    reflection_dist = wall_dist + (wall_dist - point_dist)
+    height_reflection = surface_height(t_since_impact, reflection_dist, impact.F)
+
+    return height_reflection * reflectivity
+
+
+def surface_height_gradient(t: float, impacts_: Iterable[Impact], x: float, y: float) -> \
+        Tuple[float, float]:
     """Create a linear approximation, for finding the slope at a point.
     x and y are points.  t is the time we're taking the derivative.
     Used to calculate bounce mechanics."""
     # todo perhaps you should take into account higher order effects.
-    δ = 10e-5  # Should this be fixed?
+    δ = 1e-6  # Arbitrarily small
+
+    height = partial(net_surface_height, t, impacts_)
 
     # Take a sample on each side of the location we're testing.
-    # Calculate the radiuses.
-
-    def height(x_, y_):
-        return net_surface_height(t, x_, y_, impacts_)
-
     h_x_left = height(x - δ/2, y)
     h_x_right = height(x + δ/2, y)
     h_y_left = height(x, y - δ/2)
     h_y_right = height(x, y + δ/2)
 
     return (h_x_right - h_x_left) / δ, (h_y_right - h_y_left) / δ
+
+
+def surface_height_gradient2(t, impacts_: Iterable[Impact], x, y) -> Tuple[float, float]:
+    # todo no worky with numba
+    """Create a linear approximation, for finding the slope at a point.
+    x and y are points.  t is the time we're taking the derivative.
+    Used to calculate bounce mechanics."""
+    import autograd
+
+    height = partial(net_surface_height, t, impacts_)
+    grad = autograd.grad(height)
+    return grad(x, y)
+
+
+@jit
+def surface_oscilation(amplitude: float, freq: float, t: float) -> float:
+    """Return the surface's height and velocity at time t due to its oscillation;
+    a simple harmonic oscillator. a is amplitude; f is oscillation frequency."""
+    # Oscillation starts the cycle at amplitude.
+    position = amplitude * cos(2*π * freq * t)
+    velocity = -2*π * freq * amplitude * sin(2*π * freq * t)
+    return position, velocity
 
 
 # def bounce():
@@ -171,6 +237,8 @@ def surface_height_gradient(t, x, y, impacts_: Iterable[Impact]) -> Tuple[float,
 def bounce_v(grad_x: float, grad_y: float, vx: float, vy: float, vz: float) -> np.ndarray:
     """Calculate the outgoing velocity in x, y, and z directions after a bounce."""
     # todo atm the drop does not lose any momentum to the surface.
+    # todo you coulud include bath oscillation velocity here, but may need
+    # todo a fininte contact time to do so.
     v = np.array([vx, vy, vz])
     normal = np.cross(np.array([1, 0, grad_x]), np.array([0, 1, grad_y]))
     unit_normal = normal / np.linalg.norm(normal)
@@ -239,18 +307,17 @@ def ode_rhs(y: np.ndarray, t: float, drop_len: int) -> Tuple:
         # no where near bouncing; the vz check is a fudge for the ball being detected
         # a bit below the surface; dont' catch it on the way up.
         if sz <= 10 and vz < 0:  # todo lower sz limit.
-            height_below_drop = net_surface_height(t, sx, sy, impacts)
+            height_below_drop = net_surface_height(t, impacts, sx, sy)
 
             if sz <= height_below_drop:  # A bounce is detected.
                 print('bounce', sz, height_below_drop)
-                grad_x, grad_y = surface_height_gradient(t, sx, sy, impacts)
+                grad_x, grad_y = surface_height_gradient(t, impacts, sx, sy)
                 # This bounce velocity change overrides the default, of last step's accel.
                 vx_bounce, vy_bounce, vz_bounce = bounce_v(grad_x, grad_y, vx, vy, vz)
 
                 # Add this new impact for future calculations.
                 F = .01  # todo i don't know what to do here.
                 impacts.append(Impact(t, sx, sy, F))
-
 
                 y = sx, sy, sz, vx_bounce, vy_bounce, vz_bounce
                 raise IntegrationEvent(y)
@@ -277,7 +344,7 @@ def ode_rhs_simple(y: np.ndarray, t: np.ndarray) -> Tuple:
 def run() -> np.ndarray:
     # y0 is Drop sx, sy, sz, vx, vy, vz
     drops_initial = np.array([
-        [100, 100, 10, 0, 0, 0],
+        [0, 0, 10, 30, -100, 0],
         # [100, 105, 10, 0, 0, 0],
         # [100, 95, 10, 0, 0, 0],
         # [105, 100, 10, 0, 0, 0],
@@ -302,7 +369,7 @@ def run() -> np.ndarray:
     return rk4_odeint(ode_rhs, y0, t, args=(drop_len,)), t, impacts
 
 
-def ode_standalone(t: np.ndarray) -> Tuple:
+def ode_standalone(t: np.ndarray, bath_oscillation=False) -> Tuple:
     """Purpose-built, non-general RK4 integrator for modelling multiple drops,
     with events. Events with one drop, or multiple drops with no events work
     with more elegant solutions, like scipy's odeint or the rk4_odeint above."""
@@ -311,56 +378,76 @@ def ode_standalone(t: np.ndarray) -> Tuple:
 
     # initial drop conditions.
     drops = np.array([
-        [100, 100, 10, 0, 0, 0],
-        [100, 105, 12, 0, 0, 0],
-        [100, 95, 10, 0, 0, 0],
-        [105, 100, 10, 0, 0, 0],
-        [105, 105, 10, 0, 0, 0],
-        [105, 95, 10, 0, 0, 0],
-        [95, 100, 10, 0, 0, 0],
-        [95, 105, 10, 0, 0, 0],
-        [95, 95, 10, 0, 0, 0],
+        [0, 0, 10, 1, 1, 0],
+        # [100, 110, 10, 0, 0, 0],
+        # [100, 95, 10, 0, 0, 0],
+        # [105, 100, 10, 0, 0, 0],
+        # [105, 105, 10, 0, 0, 0],
+        # [105, 95, 10, 0, 0, 0],
+        # [95, 100, 10, 0, 0, 0],
+        # [95, 105, 10, 0, 0, 0],
+        # [95, 95, 10, 0, 0, 0],
 
     ])
 
+    # Border format is (x1, y1, x2, y2), ie a line connecting two points.
+    borders = [(0, 200, 500, 200)]
+
     num_drops, drop_len = drops.shape
 
-    result = np.empty([len(t), num_drops, drop_len])
-    result[0] = drops
+    soln = np.empty([len(t), num_drops, drop_len])
+    soln[0] = drops
 
     for i in range(len(t) - 1):
         t_ = t[i]  # current  time
         h = t[i + 1] - t[i]  # time step
 
         for j in range(num_drops):
-            y_to_integrate = result[i, j]  # todo ??
+            y_to_integrate = soln[i, j]  # todo ??
+            y_drop = rk4(ode_rhs_simple, y_to_integrate, t_, h, args=())  # no bounce
+
             sx, sy, sz, vx, vy, vz = y_to_integrate
 
             if sz <= 10 and vz < 0:  # todo lower sz limit.
-                height_below_drop = net_surface_height(t_, sx, sy, impacts_)
+
+                height_below_drop = net_surface_height(t_, impacts_, sx, sy)
+
+                if bath_oscillation:
+                    # todo need a valid bath oscilation amplitide; it's given as
+                    # todo an acceleration in the paper. Integrate twice?
+                    height_below_drop += surface_oscilation(1, f, t_)
 
                 if sz <= height_below_drop:  # A bounce is detected.
-                    grad_x, grad_y = surface_height_gradient(t_, sx, sy,
-                                                             impacts_)
+                    grad_x, grad_y = surface_height_gradient(t_, impacts_, sx, sy)
                     # This bounce velocity change overrides the default, of last step's accel.
                     vx_bounce, vy_bounce, vz_bounce = bounce_v(grad_x, grad_y,
                                                                vx, vy, vz)
 
                     # Add this new impact for future calculations.
-                    F = .04  # todo i don't know what to do here.
+                    F = .02  # todo i don't know what to do here.
                     impacts_.append(Impact(t_, sx, sy, F))
 
+                    # Overwrite the prev-calculated non-bounce integration with
+                    # these calculated values.
                     y_drop = sx, sy, sz, vx_bounce, vy_bounce, vz_bounce
 
-                else:
-                    y_drop = rk4(ode_rhs_simple, y_to_integrate, t_, h, args=())  # no bounce
-            else:
-                y_drop = rk4(ode_rhs_simple, y_to_integrate, t_, h, args=())  # no bounce
+            soln[i+1, j] = y_drop
 
-            result[i+1, j] = y_drop
+    return soln, impacts_
 
-    return result, impacts_
 
+def plot_trajectories(soln: np.ndarray):
+    n_drops = soln.shape[1]
+
+    for drop_i in range(n_drops):
+        plt.plot(soln[:, drop_i, 0], soln[:, drop_i, 1])
+
+    plt.show()
+
+
+def quickplot(t: np.ndarray):
+    soln, impacts = ode_standalone(t)
+    plot_trajectories(soln)
 
 
 
