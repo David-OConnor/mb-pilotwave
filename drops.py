@@ -9,11 +9,14 @@ import numba
 import numpy as np
 import scikits.odes
 import scikits.odes.sundials
-from numpy import pi as π, sqrt, cos, sin, tan, arctan2, exp
+from numpy import pi as π, sqrt, cos, sin, tan, arctan2, exp, log
 from scikits.odes import dae
 from scikits.odes.sundials import ida
 
 jit = numba.jit(nopython=True)
+
+
+τ = 2 * π
 
 # Assume we're not modeling the up and down motions; each simulation tick
 # represents the particle impacting the grid
@@ -34,6 +37,7 @@ dt = 1  # Seconds per tick
 
 PARTICLE_MASS = 1  # Assumed to be a point; ie no volume.
 
+# todo meters vs mm for distance??
 # Added from Drops Walking...
 R0 = 0.39  # Undeformed drop radius.
 ρ = 949  # Silicone oil density (droplet and bed), kg/m^3
@@ -53,7 +57,7 @@ D = 76  # Cylindrical bath container diameter, mm
 # something different.
 
 f = 100  # Bath shaking frequency.  40 - 200 Hz
-ω = 2*π * f  # = 2π*f Bath angular frequency.  250 - 1250 rad s^-1
+ω = τ * f  # = 2π*f Bath angular frequency.  250 - 1250 rad s^-1
 # ωD = (σ/ρR0^3)^(1/2) Characteristic drop oscillation freq.  300 - 5000s^-1
 ωD = (σ/ρ*R0**3)**(1/2)
 Oh = 1  # Drop Ohnsesorge number. 0.004-2
@@ -75,6 +79,7 @@ m = .001  # Not in paper; temporary mass I'm using.
 
 # an Impact is an event of the drop hitting the surface.
 Impact = namedtuple('Impact', ['t', 'x', 'y', 'F'])  # Add other aspects like speed, force etc.
+Point = namedtuple('Point', ['x', 'y'])  # Add other aspects like speed, force etc.
 
 impacts = []
 
@@ -89,7 +94,7 @@ def surface_height(t: float, r: float, F: float) -> float:
     height, based on one impact. The results can be added to take into account multiple
     impacts."""
     #
-    τ = ωD * t  # τ is dimensionless time, not 2*pi !!
+    τ_ = ωD * t  # τ is dimensionless time, not 2*pi !!
     # todo what is μe??? Not defined in paper, but used.
 
     # Ohe is the effective Ohnesorge number. # todo what is mu e??
@@ -105,7 +110,7 @@ def surface_height(t: float, r: float, F: float) -> float:
 
     # F = 0  # Dimensionless reaction force.
 
-    term1 = (4*sqrt(2*π))/(3*sqrt(τ)) * (kC**2*kF*Ohe**(1/2))/(3*kF**2 + Bo)
+    term1 = (4*sqrt(τ))/(3*sqrt(τ_)) * (kC**2*kF*Ohe**(1/2))/(3*kF**2 + Bo)
 
     # Todo we're using instantaneous impacts as a simplification for now.
     # Term 2 represents the amplitude of the wave.
@@ -114,17 +119,17 @@ def surface_height(t: float, r: float, F: float) -> float:
     # todo of the impact instant, but let's try.
     term2 = F * sin(Ω/2)
 
-    term3 = cos(Ω/2) * exp((Γ/ΓF - 1) * (τ/τD)) * brisk.j0(kC*r)
+    term3 = cos(Ω/2) * exp((Γ/ΓF - 1) * (τ_/τD)) * brisk.j0(kC*r)
 
     # Note: todo this is a start at the more "complete" version in the paper.
-    # term1 = (4*sqrt(2*π))/(3) * (kC**2*kF*Ohe**(1/2))/(3*kF**2 + Bo)
+    # term1 = (4*sqrt(τ))/(3) * (kC**2*kF*Ohe**(1/2))/(3*kF**2 + Bo)
     # term2 =
     # term3 = H(τ)/sqrt(τ) * exp((Γ/ΓF - 1) * (τ/τD)) * special.j0(kC*r)
 
     return term1 * term2 * term3
 
 
-def net_surface_height(t: float, impacts_: Iterable, x: float, y: float, reflectivity=1) -> float:
+def net_surface_height(t: float, impacts_: Iterable, point: Tuple[float, float], reflectivity=1) -> float:
     """Finds the height, taking into account multiple impacts."""
     # todo add a limiter so old impacts aren't included; they're insignificant,
     # todo and we need to computationally limit the num of impacts.
@@ -139,7 +144,8 @@ def net_surface_height(t: float, impacts_: Iterable, x: float, y: float, reflect
         if t_since_impact <= 0:
             continue
 
-        Δx, Δy = x - impact.x, y - impact.y
+        # Difference between point we're examing, and impact
+        Δx, Δy = point[0] - impact.x, point[1] - impact.y
         point_dist = (Δx**2 + Δy**2) ** 0.5
 
         # 'height' is the base, ie non-reflected-component height.
@@ -152,39 +158,152 @@ def net_surface_height(t: float, impacts_: Iterable, x: float, y: float, reflect
         height_below_drop += height
         if point_dist <= 50:
             # todo temp reflection calc!
-            height_below_drop += wall_reflection(impact, t_since_impact, Δx, Δy, point_dist, reflectivity)
+            height_below_drop += wall_reflection(impact, t_since_impact, point, Δx, Δy, point_dist, reflectivity)
 
             pass
     return height_below_drop
 
 
-def wall_reflection(impact, t_since_impact, Δx, Δy, point_dist, reflectivity, n_reflections=1):
-    """Experimental!"""
-    # n_reflections controls how many walls to bounce off of.
+@jit
+def point_to_line(linept0: Point, linept1: Point, point: Point) -> float:
+    """Calculate the distance between a line, defined by two points, and a point."""
+    dx, dy = linept1.x - linept0.x, linept1.y - linept0.y
+    num = abs(dy * point.x - dx * point.y + linept1.x * linept0.y - linept1.y * linept0.x)
+    denom = sqrt(dy**2 + dx**2)
+    return num/denom
 
-    # todo model circle with radius 50, centered on 0, 0
 
-    # todo as of now, you're modeling in cartesian coordinates starting at 0, 0
-    # todo no more array-based indexing from top-left!
-    # todo attempt at collision detection:
-    # Angle between the impact origin, and the location we're examining.
-    θ_point = arctan2(Δy, Δx)
+# todo separate file for surface reflection calcs??
 
-    wall_dist = 50  # todo this only works with a circle!
+@jit
+def simple_collision(impact_prime: Point, θiw: float):
+    """Calculate where on the wall of a circular corral a line coming from an impact
+    will hit, given an initial angle from the impact."""
+    # impact_prime is in a cartesian coordinate system centered on the corral's center.
+    # slope and y-intercept of the line connecting the impact to the wall
+    m_ = tan(θiw)
+    y_int = impact_prime.y - m_ * impact_prime.x  # Could also use point_prime here; same result.
 
-    # Don't calc reflections for points beyond this wall going in this direction.
-    if point_dist > wall_dist:  # todo again, this only works for a circle.
-        return 0
+    # print(m_, y_int)
+    # D is corral radius, as used in the Molacek and Bush paper.
 
-    θ_wall = (θ_point + (2*π)/4) % (2*π) # todo this only works with a circle!
-    # todo perhaps this works for circle, but you could generalize this now
-    # todo including wall angle.
+    # solve the system of equations:
+    # y = m_ * x + b, x**2 + y**2 = D**2
+    # Result: x**2 *(1+m_**2) + x*(2*b*m_) - (D**2 + b**2) = 0
 
-    # Find the height at this distance, reflect it back over by adding.
-    reflection_dist = wall_dist + (wall_dist - point_dist)
-    height_reflection = surface_height(t_since_impact, reflection_dist, impact.F)
+    # Solve with quadratic formula:
+    # Note: b here is for quadratic formula; use y_int above ie y = mx + b
 
-    return height_reflection * reflectivity
+    a, b, c = 1 + m_**2, 2*y_int*m_, - D**2 + y_int**2
+
+    # if the impact's to the left of the point, use the positive root; else negative
+    # This is to make sure we're always using the normal vector inside the circle.
+    # todo if they're equal, you get a zero div error; fix later.
+    root_sign = -1 if τ/4 <= θiw < 3*τ/4 else 1
+
+    x_wall = (-b + root_sign * sqrt(b**2 - 4 * a * c)) / (2 * a)
+    y_wall = m_ * x_wall + y_int
+    return Point(x_wall, y_wall)
+
+
+
+@jit
+def cast_ray(impact: Impact, sample_pt: Point, center: Point, θiw: float):
+    """Calculate the distance between a point, and a ray cast from the impact,
+    bounced off one wall, in a circular corral."""
+    # θiw is the angle of the impact to the wall we're trying.'
+    # Circular corral only for now.
+    # Create a grid system centered on the corral center; find impact and the point
+    # we're examining in that grid.
+    # primes are the coordinates in the coral's coord system.
+    impact_prime = Point(impact.x - center.x, impact.y - center.y)
+
+    collision_pt = simple_collision(impact_prime, θiw)
+
+    θw = arctan2(collision_pt.y, collision_pt.x) % τ  # normal angle to the wall
+    θw = (θw + τ/2) % τ
+    # print("thetaw:", θw)
+
+    unit_normal = np.array([cos(θw), sin(θw)])
+    v = np.array([cos(θiw), sin(θiw)])
+    reflection = v - 2*(v @ unit_normal) * unit_normal
+
+    # print("unit normal, v", unit_normal, v)
+    # print(collision_pt, θw)
+    # print("Reflection:", reflection)
+
+    reflection_pt = Point(collision_pt.x + reflection[0], collision_pt.y + reflection[1])
+    return point_to_line(collision_pt, reflection_pt, sample_pt)
+
+
+# todo do you need to find both solutions, and add both? Likely.
+# todo you can probably think of a smarter way with interpolation...
+@jit
+def find_wall_collision(impact: Impact, sample_pt: Point, precision: int=τ/1000):
+    """Calculate where a wave would hit the nearest wall. Cast rays, and guess"""
+    # precision is in radians. Consider setting it in terms of distance to sample.
+    # Find the number of iterations required to meet the specified precision.
+    # You could also use a while loop instead of calcing this manually.
+    n = int(log(τ / precision) / log(2))
+
+    # Circular corral only for now.
+    # Create a grid system centered on the corral center; find impact and the point
+    # we're examining in that grid.
+    coral_center = Point(0, 0)  # todo this only works with a circle!
+    θiw_0 = 0
+    θiw_1 = τ / 2
+    θiw_closer = θiw_0
+
+    θ_guesses = τ / 2
+    for i in range(n):
+        θ_guesses /= 2  # Angular distance between guesses; shrink this  each iteration.
+        dist_ray_to_sample0 = cast_ray(impact, sample_pt, coral_center, θiw_0)
+        dist_ray_to_sample1 = cast_ray(impact, sample_pt, coral_center, θiw_1)
+
+        θiw_closer = θiw_0 if dist_ray_to_sample0 < dist_ray_to_sample1 else θiw_1
+
+        # Make the next guesses bracket the closest of the current  ones.
+        θiw_0 = θiw_closer - θ_guesses
+        θiw_1 = θiw_closer + θ_guesses
+
+    print(dist_ray_to_sample0)
+    impact_prime = Point(impact.x - coral_center.x, impact.y - coral_center.y)
+    return simple_collision(impact_prime, θiw_closer)
+
+
+# def wall_reflection(impact, t_since_impact, point: Tuple[float, float], Δx, Δy, point_dist, reflectivity, n_reflections=1):
+#     """Experimental! For reflecting  the standing faraday waves off walls."""
+#     # n_reflections controls how many walls to bounce off of.
+#
+#
+#     # Angle between the impact origin, and the location we're examining.
+#     θ_point_impact = arctan2(Δy, Δx)
+#
+#     # Angle between coral ceenter and the location we're examining.
+#     # θ_point_coral_ctr = arctan2(point[1] - coral_center[1], point[0] - coral_center[0])
+#
+#     collision_point, collision_angle = find_wall_collision(impact, point)
+#
+#     # Todo here's where my geometrical knowledge shall fail.
+#
+#
+#
+#     θ_wall = (θ_point_impact + τ/4) % τ # todo this only works with a circle!
+#     # todo perhaps this works for circle, but you could generalize this now
+#     # todo including wall angle.
+#
+#
+#     # Don't calc reflections for points beyond this wall going in this direction.
+#     if point_dist > wall_dist:  # todo again, this only works for a circle.
+#         return 0
+#
+#
+#
+#     # Find the height at this distance, reflect it back over by adding.
+#     reflection_dist = wall_dist + (wall_dist - point_dist)
+#     height_reflection = surface_height(t_since_impact, reflection_dist, impact.F)
+#
+#     return height_reflection * reflectivity
 
 
 def surface_height_gradient(t: float, impacts_: Iterable[Impact], x: float, y: float) -> \
@@ -198,10 +317,10 @@ def surface_height_gradient(t: float, impacts_: Iterable[Impact], x: float, y: f
     height = partial(net_surface_height, t, impacts_)
 
     # Take a sample on each side of the location we're testing.
-    h_x_left = height(x - δ/2, y)
-    h_x_right = height(x + δ/2, y)
-    h_y_left = height(x, y - δ/2)
-    h_y_right = height(x, y + δ/2)
+    h_x_left = height((x - δ/2, y))
+    h_x_right = height((x + δ/2, y))
+    h_y_left = height((x, y - δ/2))
+    h_y_right = height((x, y + δ/2))
 
     return (h_x_right - h_x_left) / δ, (h_y_right - h_y_left) / δ
 
@@ -219,13 +338,18 @@ def surface_height_gradient2(t, impacts_: Iterable[Impact], x, y) -> Tuple[float
 
 
 @jit
-def surface_oscilation(amplitude: float, freq: float, t: float) -> float:
+def surface_oscilation(t: float) -> float:
     """Return the surface's height and velocity at time t due to its oscillation;
-    a simple harmonic oscillator. a is amplitude; f is oscillation frequency."""
-    # Oscillation starts the cycle at amplitude.
-    position = amplitude * cos(2*π * freq * t)
-    velocity = -2*π * freq * amplitude * sin(2*π * freq * t)
-    return position, velocity
+    a simple harmonic oscillator."""
+    # Oscillation starts the cycle at negative amplitude.
+    # Use global constants for frequency and bath acceleration.
+
+    ω = τ * f
+    bath_accel = γ * cos(ω * t)  # integrate this to get velocity and position.
+    bath_vel = γ * ω**-1 * sin(ω * t)  # + C
+    bath_height = -γ * ω**(-2) * cos(ω*t)  # + C*t
+
+    return bath_height, bath_vel, bath_accel
 
 
 # def bounce():
@@ -307,7 +431,7 @@ def ode_rhs(y: np.ndarray, t: float, drop_len: int) -> Tuple:
         # no where near bouncing; the vz check is a fudge for the ball being detected
         # a bit below the surface; dont' catch it on the way up.
         if sz <= 10 and vz < 0:  # todo lower sz limit.
-            height_below_drop = net_surface_height(t, impacts, sx, sy)
+            height_below_drop = net_surface_height(t, impacts, (sx, sy))
 
             if sz <= height_below_drop:  # A bounce is detected.
                 print('bounce', sz, height_below_drop)
@@ -448,8 +572,6 @@ def plot_trajectories(soln: np.ndarray):
 def quickplot(t: np.ndarray):
     soln, impacts = ode_standalone(t)
     plot_trajectories(soln)
-
-
 
 
 def skode_test():

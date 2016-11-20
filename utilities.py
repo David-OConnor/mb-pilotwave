@@ -23,7 +23,7 @@ def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1, plo
             sx = j / resolution
             sy = i / resolution
 
-            h[i, j] = drops.net_surface_height(t, impacts, sx, sy)
+            h[i, j] = drops.net_surface_height(t, impacts, (sx, sy))
 
     if plot:
         plt.imshow(h)
