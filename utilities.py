@@ -1,4 +1,5 @@
 from typing import Iterable
+from itertools import product
 
 import numba
 import numpy as np
@@ -10,23 +11,29 @@ import drops
 
 def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1, plot=True) -> np.ndarray:
     """Calculate a wave's effect on a 2d field."""
-    # Be careful about resolution; computation time is proportional to its square, I think.
-    grid_width = 100
-    grid_height = 100
-    array_width = grid_width * resolution
-    array_height = grid_height * resolution
+    # Be careful about resolution; computation time is proportional to its square.
+    grid_x = (-20, 20)
+    grid_y = (-20, 20)
+
+    array_width = (grid_x[1] - grid_x[0]) * resolution
+    array_height = (grid_y[1] - grid_y[0]) * resolution
 
     h = np.zeros([array_height, array_width])
 
-    for i in range(array_height):
-        for j in range(array_width):
-            sx = j / resolution
-            sy = i / resolution
+    scaled_x = (grid_x[0] * resolution, grid_x[1] * resolution)
+    scaled_y = (grid_y[0] * resolution, grid_y[1] * resolution)
 
-            h[i, j] = drops.net_surface_height(t, impacts, (sx, sy))
+    for i, j in product(range(*scaled_y), range(*scaled_x)):
+        sx = j / resolution
+        sy = i / resolution
+
+        index_x = int(int(array_width / 2) + sx * resolution)
+        index_y = int(int(array_height / 2) + sy * resolution)
+
+        h[index_y, index_x] = drops.net_surface_height(t, impacts, drops.Point(sx, sy))
 
     if plot:
-        plt.imshow(h)
+        plt.imshow(h, extent=[*grid_x, *grid_y])
         # plot_surface(h)
 
     return h
@@ -47,7 +54,6 @@ def plot_path(soln: np.ndarray, plot=True) -> np.ndarray:
 
 """
 impacts = [drops.Impact(10, 100, 100, 1), drops.Impact(10, 100, 105, 1), drops.Impact(10, 100, 95, 1), drops.Impact(10, 105, 100, 1), drops.Impact(10, 105, 105, 1), drops.Impact(10, 105, 95, 1), drops.Impact(10, 95, 100, 1), drops.Impact(10, 95, 105, 1), drops.Impact(10, 95, 95, 1)]"""
-
 
 
 

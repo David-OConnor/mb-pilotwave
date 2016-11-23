@@ -11,6 +11,9 @@ from drops import D, τ
 jit = numba.jit(nopython=True)
 
 # Use arrays instead of Point objects, to make working with numba easiser.
+# todo sort out Points vs arrays; numba is sensitive! Looks like arrays result in
+# todo MUCH faster performance compared to a tuple or namedtuple
+# todo just using x and y as separate vars also offers big speed boosts, and the cost of readability.
 
 
 @jit
@@ -19,7 +22,7 @@ def point_to_line(linept0: np.ndarray, linept1: np.ndarray, point: np.ndarray) -
     dx, dy = linept1[0] - linept0[0], linept1[1] - linept0[1]
     num = abs(dy * point[0] - dx * point[1] + linept1[0] * linept0[1] - linept1[1] * linept0[0])
     denom = sqrt(dy**2 + dx**2)
-    return num/denom
+    return num / denom
 
 
 @jit
@@ -31,26 +34,25 @@ def simple_collision(impact_prime: np.ndarray, θiw: float) -> np.ndarray:
     m_ = tan(θiw)
     y_int = impact_prime[1] - m_ * impact_prime[0]  # Could also use point_prime here; same result.
 
-    # print(m_, y_int)
-    # D is corral radius, as used in the Molacek and Bush paper.
+    # # D is corral radius, as used in the Molacek and Bush paper.
+    # # solve the system of equations:
+    # # y = m_ * x + b, x**2 + y**2 = D**2
+    # # Result: x**2 *(1+m_**2) + x*(2*b*m_) - (D**2 + b**2) = 0
 
-    # solve the system of equations:
-    # y = m_ * x + b, x**2 + y**2 = D**2
-    # Result: x**2 *(1+m_**2) + x*(2*b*m_) - (D**2 + b**2) = 0
-
-    # Solve with quadratic formula:
-    # Note: b here is for quadratic formula; use y_int above ie y = mx + b
-
+    # # Solve with quadratic formula:
+    # # Note: b here is for quadratic formula; use y_int above ie y = mx + b
     a, b, c = 1 + m_**2, 2*y_int*m_, - D**2 + y_int**2
 
-    # if the impact's to the left of the point, use the positive root; else negative
-    # This is to make sure we're always using the normal vector inside the circle.
+    # If the impact's to the left of the point, use the positive root; else negative
+
     # todo if they're equal, you get a zero div error; fix later.
     root_sign = -1 if τ/4 <= θiw < 3*τ/4 else 1
 
     x_wall = (-b + root_sign * sqrt(b**2 - 4 * a * c)) / (2 * a)
     y_wall = m_ * x_wall + y_int
-    return np.ndarray([x_wall, y_wall])
+
+    # return (x_wall, y_wall)
+    return np.array([x_wall, y_wall])
 
 
 @jit
@@ -64,6 +66,7 @@ def cast_ray(impact: np.ndarray, sample_pt: np.ndarray, center: np.ndarray, θiw
 
     # primes are the coordinates in the coral's coord system.
     impact_prime = np.array([impact[0] - center[0], impact[1] - center[1]])
+    sample_prime = np.array([sample_pt[0] - center[0], sample_pt[1] - center[1]])
     collision_pt = simple_collision(impact_prime, θiw)
 
     # print(collision_pt, 'colpt')
@@ -75,7 +78,7 @@ def cast_ray(impact: np.ndarray, sample_pt: np.ndarray, center: np.ndarray, θiw
     reflection = v - 2*(v @ unit_normal) * unit_normal
 
     reflection_pt = np.array([collision_pt[0] + reflection[0], collision_pt[1] + reflection[1]])
-    return point_to_line(collision_pt, reflection_pt, sample_pt)
+    return point_to_line(collision_pt, reflection_pt, sample_prime)
 
 
 @jit
@@ -86,7 +89,6 @@ def cast_ray_fsolvable(impact: np.ndarray, sample_pt: np.ndarray, center: np.nda
     return cast_ray(impact, sample_pt, center, θiw[0])
 
 
-# @jit
 def find_wall_collision(impact: np.ndarray, sample_pt: np.ndarray, center: np.ndarray) -> Iterator[np.ndarray]:
     """Calculate where a wave would hit the nearest wall. Cast rays, and guess"""
     # Note: using  @jit on all functions this calls yields a dramatic performance increase,
@@ -94,6 +96,10 @@ def find_wall_collision(impact: np.ndarray, sample_pt: np.ndarray, center: np.nd
     # Circular corral only for now.
     # Create a grid system centered on the corral center; find impact and the point
     # we're examining in that grid.
+
+    # Take this many sample points between 0 and τ for rough root estimates.
+    ROUGH_SAMPLE_PTS = 1000
+    SAMPLE_THRESHOLD = .4  # Check distances below this value for roots with fsolve.
 
     cast = partial(cast_ray, impact, sample_pt, center)
     cast_fsolvable = partial(cast_ray_fsolvable, impact, sample_pt, center)
@@ -104,18 +110,16 @@ def find_wall_collision(impact: np.ndarray, sample_pt: np.ndarray, center: np.nd
     # there has to be a better way.
 
     # Guess roots by finding where the low points are.
-    θ = np.linspace(0, τ, 1000)
+    θ = np.linspace(0, τ, ROUGH_SAMPLE_PTS)
     dist_rough = np.array(list(map(cast, θ)))
-    low_dists = θ[dist_rough < .1]
+    low_dists = θ[dist_rough < SAMPLE_THRESHOLD]
 
     # Find precise roots; point fsolve to our guesses in low_dists for starting points.
     roots = np.array([scipy.optimize.fsolve(cast_fsolvable, d)[0] for d in low_dists])
     # fsolve will give slightly different answers for the same roots; round
     # so set eliminates them properly as duplicates.
     roots = set(round(r, 8) for r in roots)
-    # print([r/τ for r in roots])
-    for root in roots:
-        yield simple_collision(impact, root)
+    return map(partial(simple_collision, impact), roots)
 
 
 def find_reflection_points(impact: np.ndarray, sample_pt: np.ndarray) -> np.ndarray:

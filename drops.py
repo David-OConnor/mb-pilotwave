@@ -151,41 +151,38 @@ def surface_height(t: float, r: float, F: float) -> float:
     return term1 * term2 * term3
 
 
+@jit
+def height_helper(t: float, impact: Impact, point: Point) -> float:
+    """Convenience function to calculate surface height at a point, given an
+    impact and time."""
+    Δx, Δy = point[0] - impact.x, point[1] - impact.y
+    point_dist2 = (Δx ** 2 + Δy ** 2) ** 0.5
+    return surface_height(t, point_dist2, impact.F)
+
+
 def net_surface_height(t: float, impacts_: Iterable, sample_pt: Point, reflectivity=1) -> float:
-    """Finds the height, taking into account multiple impacts."""
+    """Finds the height under a sample point, taking into account multiple impacts."""
     # todo add a limiter so old impacts aren't included; they're insignificant,
     # todo and we need to computationally limit the num of impacts.
     # This could possibly be jitted by replacing the Impacts list/object with a 2d array.
 
-    height_below_drop = 0
+    # height_below_drop includes the base height from all impacts, and their reflections.
+    height_below_sample = 0
 
     for impact in impacts_:
         t_since_impact = t - impact.t  # We care about time since impact.
         # Exclude impacts that occur after, or simulataneously with the current time.
-
         if t_since_impact <= 0:
             continue
 
-        # Difference between point we're examing, and impact
-        Δx, Δy = sample_pt[0] - impact.x, sample_pt[1] - impact.y
-        point_dist = (Δx**2 + Δy**2) ** 0.5
+        # Find the the base, ie non-reflected-component height.
+        height_below_sample += height_helper(t_since_impact, impact, sample_pt)
 
-        # 'height' is the base, ie non-reflected-component height.
-        height = surface_height(t_since_impact, point_dist, impact.F)
+        # Add reflection adjustment; one reflection currently.
+        # for reflection_pt in find_reflection_points((impact.x, impact.y), sample_pt):
+        #     height_below_sample += height_helper(t_since_impact, impact, reflection_pt)
 
-        height_below_drop += height
-
-        # todo temp reflection calc!
-        print(impact, sample_pt)
-        # for reflection_pt in find_reflection_points(impact, sample_pt):
-        for reflection_pt in find_reflection_points(Point(impact.x, impact.y), Point(sample_pt[0], sample_pt[1])):
-        #     # todo try violation
-            pass
-        #     Δx2, Δy2 = reflection_pt[0] - impact.x, reflection_pt[1] - impact.y
-        #     point_dist2 = (Δx2 ** 2 + Δy2 ** 2) ** 0.5
-        #     height_below_drop += surface_height(t_since_impact, point_dist2, impact.F)
-
-    return height_below_drop
+    return height_below_sample
 
 
 def surface_height_gradient(t: float, impacts_: Iterable[Impact], x: float, y: float) -> \
@@ -254,12 +251,6 @@ def bounce_v(grad_x: float, grad_y: float, vx: float, vy: float, vz: float) -> n
     # todo calculate collision kinetic energy? Catchers mit keeps drop from coalescing??
 
     return reflection
-
-
-def drag(v: float):
-    CD = .58  # really this varies! Usually between 0.2 and 0.5
-    A = π * R0 ** 2  # Cross-sectional area of undeformed drop.
-    return (CD * ρ_a * A * v ** 2) / 2
 
 
 # @jit
