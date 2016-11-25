@@ -14,7 +14,7 @@ from scikits.odes import dae
 from scikits.odes.sundials import ida
 from scipy.optimize import fsolve
 
-# from wave_reflection import find_reflection_points
+from wave_reflection import find_reflection_points
 
 jit = numba.jit(nopython=True)
 
@@ -159,11 +159,11 @@ def height_helper(t: float, impact: Impact, point: Point) -> float:
     """Convenience function to calculate surface height at a point, given an
     impact and time."""
     Δx, Δy = point[0] - impact.x, point[1] - impact.y
-    point_dist2 = (Δx ** 2 + Δy ** 2) ** 0.5
-    return surface_height(t, point_dist2, impact.F)
+    point_dist = (Δx ** 2 + Δy ** 2) ** 0.5
+    return surface_height(t, point_dist, impact.F)
 
 
-def net_surface_height(t: float, impacts_: Iterable, sample_pt: Point, reflectivity=1) -> float:
+def net_surface_height(t: float, impacts_: Iterable, sample_pt: np.ndarray, reflectivity=1) -> float:
     """Finds the height under a sample point, taking into account multiple impacts."""
     # todo add a limiter so old impacts aren't included; they're insignificant,
     # todo and we need to computationally limit the num of impacts.
@@ -182,8 +182,9 @@ def net_surface_height(t: float, impacts_: Iterable, sample_pt: Point, reflectiv
         height_below_sample += height_helper(t_since_impact, impact, sample_pt)
 
         # Add reflection adjustment; one reflection currently.
-        # for reflection_pt in find_reflection_points((impact.x, impact.y), sample_pt):
-        #     height_below_sample += height_helper(t_since_impact, impact, reflection_pt)
+        # Convert impact to an array, for faster use with jited funcs.
+        for reflection_pt in find_reflection_points(np.array([impact.x, impact.y]), sample_pt):
+            height_below_sample += height_helper(t_since_impact, impact, reflection_pt)
 
     return height_below_sample
 
@@ -409,8 +410,8 @@ def ode_standalone(t: np.ndarray, bath_oscillation=False) -> Tuple:
             sx, sy, sz, vx, vy, vz = y_to_integrate
 
             if sz <= 10 and vz < 0:  # todo lower sz limit.
-
-                height_below_drop = net_surface_height(t_, impacts_, sx, sy)
+                sample_pt = np.array([sx, sy])
+                height_below_drop = net_surface_height(t_, impacts_, sample_pt)
 
                 if bath_oscillation:
                     # todo need a valid bath oscilation amplitide; it's given as

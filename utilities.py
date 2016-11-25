@@ -50,10 +50,10 @@ def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1, plo
 def reflection_field(impact: np.ndarray, center: np.ndarray, θiw: float) -> np.ndarray:
     """Plot the distances to a reflected ray in a circular corral, for every
     point in a circle.  Useful for seeing a ray's reflected path."""
-    result = np.zeros([2*D + 5, 2*D + 5])
+    result = np.zeros([D + 5, D + 5])
 
     range_θ = np.linspace(0, τ, 1000)
-    range_r = np.linspace(0, drops.D, 100)
+    range_r = np.linspace(0, D/2, 100)
 
     for θ, r in product(range_θ, range_r):
         point = np.array([r * cos(θ), r * sin(θ)])  # Convert from polar to cartesian
@@ -64,7 +64,7 @@ def reflection_field(impact: np.ndarray, center: np.ndarray, θiw: float) -> np.
 
         result[index_y, index_x] = d
 
-    plt.imshow(result, extent=[-100, 100, -100, 100])
+    plt.imshow(result, extent=[-D/2, D/2, -D/2, D/2])
     plt.colorbar()
 
 

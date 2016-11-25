@@ -37,9 +37,10 @@ def simple_collision(impact: np.ndarray, center: np.ndarray, θiw: float) -> np.
 
     d = L - impact
     f = impact - center
+    r = D/2
 
     # Solve the quadratic formula
-    a, b, c = d @ d, 2 * (f @ d), f @ f - D**2
+    a, b, c = d @ d, 2 * (f @ d), f @ f - r**2
     root_sign = 1  # It looks like we always use the positive root.
     t = (-b + root_sign * sqrt(b ** 2 - 4 * a * c)) / (2 * a)
 
@@ -114,7 +115,8 @@ def find_low_zones(low_dist, low_θ) -> List[Tuple[float, float]]:
 
 
 # @jit
-def find_wall_collisions(impact: np.ndarray, sample_pt: np.ndarray, center: np.ndarray) -> Iterator[np.ndarray]:
+def find_wall_collisions(impact: np.ndarray, sample_pt: np.ndarray, center: np.ndarray) -> \
+        Iterator[np.ndarray]:
     """Calculate where a wave would hit the nearest wall. Cast rays, and guess"""
     # Note: using  @jit on all functions this calls yields a dramatic performance increase,
     # but unable to @jit this function due to use of fsolve.
@@ -122,7 +124,7 @@ def find_wall_collisions(impact: np.ndarray, sample_pt: np.ndarray, center: np.n
     # Create a grid system centered on the corral center; find impact and the point
     # we're examining in that grid.
     # Take this many sample points between 0 and τ for rough root estimates.
-    ROUGH_SAMPLE_PTS = 50  # Higher is more accurate, but slower
+    ROUGH_SAMPLE_PTS = 100  # Higher is more accurate, but slower
     # Check distances below this value for roots with fsolve.
     THRESH_SCALER = .4  # scaler; scale by this amount each time
     # todo numbafy.
@@ -155,13 +157,14 @@ def find_wall_collisions(impact: np.ndarray, sample_pt: np.ndarray, center: np.n
         # narrow down on the possible roots.
         thresh *= THRESH_SCALER
 
-    guesses = ((zone[1] + zone[1]) / 2 for zone in zones)
-    # guesses = list(guesses)
-    # print(guesses)
+    θ_guesses = ((zone[1] + zone[1]) / 2 for zone in zones)
 
     # Find precise roots; the guesses should be pretty good, but let fsolve refine.
     # Using fsolve doesn't appreciably add to solve time.
-    return np.array([scipy.optimize.fsolve(cast_fsolvable, guess)[0] for guess in guesses])
+    θ_roots = (scipy.optimize.fsolve(cast_fsolvable, guess)[0] for guess in θ_guesses)
+    # θ_roots = list(θ_roots)
+    # print(θ_roots, 'roots')
+    return map(partial(simple_collision, impact, center), θ_roots)
 
 
 def find_reflection_points(impact: np.ndarray, sample_pt: np.ndarray) -> np.ndarray:
@@ -170,6 +173,8 @@ def find_reflection_points(impact: np.ndarray, sample_pt: np.ndarray) -> np.ndar
 
     # height = 0 # The height to add based on reflected points outside the circular corral.
     wall_collision_pts = find_wall_collisions(impact, sample_pt, coral_center)
+    wall_collision_pts = list(wall_collision_pts)
+
     for wall_pt in wall_collision_pts:
         dx_wall_sample, dy_wall_sample = sample_pt[0] - wall_pt[0], sample_pt[1] - wall_pt[1]
         dx_impact_wall, dy_impact_wall = wall_pt[0] - impact[0], wall_pt[1] - impact[1]
@@ -178,4 +183,8 @@ def find_reflection_points(impact: np.ndarray, sample_pt: np.ndarray) -> np.ndar
         dist_impact_wall = sqrt(dx_impact_wall ** 2 + dy_impact_wall ** 2)
         scale_factor = dist_wall_sample / dist_impact_wall
 
-        yield np.array([dx_impact_wall, dy_impact_wall]) * scale_factor
+        # A vector, (0-centered) representing where to take the point outside the circle,
+        # that we might reflect onto the sample point. scale factor adjusts how far
+        # to modify the impact-wall line, with  1 being its original length.
+        vector = np.array([dx_impact_wall, dy_impact_wall]) * (1 + scale_factor)
+        yield vector + impact  # vector is centered at 0, 0; move to to the impact's ref.
