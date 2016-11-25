@@ -14,7 +14,7 @@ from scikits.odes import dae
 from scikits.odes.sundials import ida
 from scipy.optimize import fsolve
 
-from wave_reflection import find_reflection_points
+# from wave_reflection import find_reflection_points
 
 jit = numba.jit(nopython=True)
 
@@ -41,39 +41,42 @@ dt = 1  # Seconds per tick
 PARTICLE_MASS = 1  # Assumed to be a point; ie no volume.
 
 # todo meters vs mm for distance??
-# System paramters, mostly from Malacek and Bush.
-R0 = 0.39  # Undeformed drop radius.
+# System paramters,  from Malacek and Bush, Table 1, P 617.
+R_0 = 0.39  # Undeformed drop radius.
 ρ = 949  # Silicone oil density (droplet and bed), kg/m^3
 ρ_a = 1.2  # Air density, kg/m^3
 σ = 20.6e-3  # Surface tension, N/m
 g = -9.81  # Gravity, in m * s^-2.  Paper uses positive value??
-vis = 20  # kinematic viscocity, cSt
-μ = 10**-2 # Drop dynamic viscocity. 10**-3 - 10**-1 kg*m^-1*s^-1
+V_in = 0.5  # Drop incoming speed; 0.1 - 1 m*s**-1
+V_out = 0.5  # Drop outgoing speed; 0.1 - 1 m*s**-1
+μ = 10**-2  # Drop dynamic viscocity. 10**-3 - 10**-1 kg*m^-1*s^-1
 μ_a = 1.84 * 10 ** -5  # Air dynamic viscocity. 1.84 * 10**-5 kg*m^-1*s^-1 Constant?
+v = 50  # Drop kinematic viscocity; 10-100 cSt
+v_a = 15  # Air kinematic viscosity; 15 cSt
+T_c = 10  # Contact time, 1-20ms
+# C_r Coefficient of restitution; 0-0.4
+f = 100  # Bath shaking frequency.  40 - 200 Hz
+γ = 50  # Peak bath vibration acceleration, m * s^-2 0-70
+ω = τ * f  # = 2π*f Bath angular frequency.  250 - 1250 rad s^-1
+ωD = (σ / ρ * R_0 ** 3) ** (1 / 2)  # Characteristic drop oscillation freq.  300 - 5000s^-1
+We = ρ * R_0 * V_in**2 / σ  # Weber number; 0.01 - 1
+Bo = ρ * -g * R_0**2 / σ  # Bond number.  10**-3 - .04. Use positive g??
+Oh = μ * (σ*ρ*R_0)**(-1/2)  # Drop Ohnsesorge number. 0.004-2
+Oh_a = μ_a * (σ*ρ*R_0)**(-1/2)  # Air Ohnesorge number. 10**-4 - 10**-3
+Ω = τ*f * sqrt(ρ * R_0**3 / σ)  # Vibration number.  0 - 1.4
+Γ = γ / -g  # Peak non-dimensional bath acceleration.  0 - 7
+
+# More system parameters.
 bath_depth = 9  # mm
 D = 76  # Cylindrical bath container diameter, mm
-γ = 50  # Peak bath vibration acceleration, m * s^-2 0-70
 # Effective gravity is g + γ*sin(τ*f*t)
 # C is the non-dimensional drag cofficient. Depends weakly on system params.
 # C ranges from .17 to .33 for walking regime, but .17 matches data from M&B paper.
 C = .17
-
-
-# don't use circle tau here since it's used to mean
-# something different.
-
-f = 100  # Bath shaking frequency.  40 - 200 Hz
-ω = τ * f  # = 2π*f Bath angular frequency.  250 - 1250 rad s^-1
-# ωD = (σ/ρR0^3)^(1/2) Characteristic drop oscillation freq.  300 - 5000s^-1
-ωD = (σ/ρ*R0**3)**(1/2)
-Oh = 1  # Drop Ohnsesorge number. 0.004-2
-Bo = .1  # Bond number.  10**-3 - 0.4
-Ω = 0.7  # Vibration number.  0 - 1.4
-Γ = 3  # Peak non-dimensional bath acceleration.  0 - 7
 # ΓF  From lookup table?
 ΓF = 5.159
-
 m = .001  # Not in paper; temporary mass I'm using.
+
 
 
 # todo do I need accel? Constant down due to g, and bounce accel could be applied instantly??
@@ -102,7 +105,7 @@ def drag(v: float):
     # "The first term arises from the transfer of momentum from the drop to the
     # bath during impact, and the second from the aerodynamic drag exerted on
     # the droplet during flight." - Oza, Rosales and Bush
-    D = C*m*g * sqrt(ρ*R0/σ) + 6*π*μ_a*R0*(1 + (π*ρ_a*g*0) / (6*μ_a*ω))
+    D = C*m*g * sqrt(ρ * R_0 / σ) + 6 * π * μ_a * R_0 * (1 + (π * ρ_a * g * 0) / (6 * μ_a * ω))
     return -D * v
 
 
@@ -121,11 +124,11 @@ def surface_height(t: float, r: float, F: float) -> float:
 
     # Ohe is the effective Ohnesorge number. # todo what is mu e??
     # Ohe = μe / (σ*ρ*R0)**(1/2)  # μe / (σρR0)**(1/2)  # or OhD ?
-    Ohe = μ / (σ*ρ*R0)**(1/2)  # μe / (σρR0)**(1/2)  # or OhD ?
+    Ohe = μ / (σ * ρ * R_0) ** (1 / 2)  # μe / (σρR0)**(1/2)  # or OhD ?
 
     # Use the global lookup table for these values??
     τF = 1.303  # Faraday period.
-    τC = 0  # Contact time? Dimensionless?? 1-20ms ??
+    τC = 5  # Contact time? Dimensionless?? 1-20ms ??
     τD = 1.303  # Decay time
     kC = .888  # Also given by a formula... (3.8)
     kF = .888

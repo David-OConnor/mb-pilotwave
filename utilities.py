@@ -1,12 +1,14 @@
-from typing import Iterable
+from typing import Iterable, Tuple
 from itertools import product
 
 import numba
 import numpy as np
 from matplotlib import pyplot as plt
 import matplotlib.animation as animation
+from numpy import sin, cos
 
-import drops
+import drops, wave_reflection
+from drops import D, τ
 
 
 def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1, plot=True) -> np.ndarray:
@@ -23,20 +25,83 @@ def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1, plo
     scaled_x = (grid_x[0] * resolution, grid_x[1] * resolution)
     scaled_y = (grid_y[0] * resolution, grid_y[1] * resolution)
 
-    for i, j in product(range(*scaled_y), range(*scaled_x)):
+    range_x = range(*scaled_y)
+    range_y = range(*scaled_x)
+
+    for i, j in product(range_x, range_y):
         sx = j / resolution
         sy = i / resolution
 
-        index_x = int(int(array_width / 2) + sx * resolution)
-        index_y = int(int(array_height / 2) + sy * resolution)
+        # Arrays index up-down, then left-right. Cartesian coordinates index
+        # left-right, then down-up, hence the y-axis sign swap.
+        index_x = int(array_width / 2 + sx * resolution)
+        index_y = int(array_height / 2 - sy * resolution) - 1
 
         h[index_y, index_x] = drops.net_surface_height(t, impacts, drops.Point(sx, sy))
 
     if plot:
         plt.imshow(h, extent=[*grid_x, *grid_y])
+        plt.colorbar()
         # plot_surface(h)
 
     return h
+
+
+def reflection_field(impact: np.ndarray, center: np.ndarray, θiw: float) -> np.ndarray:
+    """Plot the distances to a reflected ray in a circular corral, for every
+    point in a circle.  Useful for seeing a ray's reflected path."""
+    result = np.zeros([2*D + 5, 2*D + 5])
+
+    range_θ = np.linspace(0, τ, 1000)
+    range_r = np.linspace(0, drops.D, 100)
+
+    for θ, r in product(range_θ, range_r):
+        point = np.array([r * cos(θ), r * sin(θ)])  # Convert from polar to cartesian
+        d = wave_reflection.cast_ray(impact, point, center, θiw)
+
+        index_x = int(result.shape[1] / 2 + point[0])
+        index_y = int(result.shape[0] / 2 - point[1]) - 1
+
+        result[index_y, index_x] = d
+
+    plt.imshow(result, extent=[-100, 100, -100, 100])
+    plt.colorbar()
+
+
+def plot_field(f, scale0: Tuple, scale1: Tuple, resolution0: float, resolution1: float,
+               polar=False, args: Tuple=(), plot=True) -> np.ndarray:
+    """Generic version of wave_field/reflection_field"""
+    # Be careful about resolution; computation time is proportional to its square.
+
+    array_width = (scale0[1] - scale0[0]) * resolution0
+    array_height = (scale1[1] - scale1[0]) * resolution1
+
+    result = np.zeros([array_height, array_width])
+
+    scaled_x = (grid_x[0] * resolution, grid_x[1] * resolution)
+    scaled_y = (grid_y[0] * resolution, grid_y[1] * resolution)
+
+    for i, j in product(range(*scaled_y), range(*scaled_x)):
+        if polar:
+            point = np.array([j * cos(i), j * sin(i)])  # Convert from polar to cartesian
+
+        s0 = j / resolution0
+        s1 = i / resolution1
+
+        # Arrays index up-down, then left-right. Cartesian coordinates index
+        # left-right, then down-up, hence the y-axis sign swap.
+        index_x = int(array_width / 2 + s0 * resolution0)
+        index_y = int(array_height / 2 - s1 * resolution1) - 1
+
+        result[index_y, index_x] = f(*args, drops.Point(s0, s1))
+
+    if plot:
+        plt.imshow(result, extent=[*scale0, *scale1])
+        plt.colorbar()
+        # plot_surface(h)
+
+    return result
+
 
 
 def plot_path(soln: np.ndarray, plot=True) -> np.ndarray:
