@@ -11,11 +11,12 @@ import drops, wave_reflection
 from drops import D, τ
 
 
-def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1, plot=True) -> np.ndarray:
+def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1,
+               plot=True, corral=False) -> np.ndarray:
     """Calculate a wave's effect on a 2d field."""
     # Be careful about resolution; computation time is proportional to its square.
-    grid_x = (-20, 20)
-    grid_y = (-20, 20)
+    grid_x = (-int(D/2), int(D/2))
+    grid_y = (-int(D/2), int(D/2))
 
     array_width = (grid_x[1] - grid_x[0]) * resolution
     array_height = (grid_y[1] - grid_y[0]) * resolution
@@ -37,7 +38,8 @@ def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1, plo
         index_x = int(array_width / 2 + sx * resolution)
         index_y = int(array_height / 2 - sy * resolution) - 1
 
-        h[index_y, index_x] = drops.net_surface_height(t, impacts, drops.Point(sx, sy))
+        h[index_y, index_x] = drops.net_surface_height(t, impacts, np.array([sx, sy]),
+                                                       corral=corral)
 
     if plot:
         plt.imshow(h, extent=[*grid_x, *grid_y])
@@ -103,7 +105,6 @@ def plot_field(f, scale0: Tuple, scale1: Tuple, resolution0: float, resolution1:
     return result
 
 
-
 def plot_path(soln: np.ndarray, plot=True) -> np.ndarray:
     """Plot the drop's x and y positions, parameterized for time."""
     _, num_drops, t = soln.shape
@@ -119,8 +120,6 @@ def plot_path(soln: np.ndarray, plot=True) -> np.ndarray:
 
 """
 impacts = [drops.Impact(10, 100, 100, 1), drops.Impact(10, 100, 105, 1), drops.Impact(10, 100, 95, 1), drops.Impact(10, 105, 100, 1), drops.Impact(10, 105, 105, 1), drops.Impact(10, 105, 95, 1), drops.Impact(10, 95, 100, 1), drops.Impact(10, 95, 105, 1), drops.Impact(10, 95, 95, 1)]"""
-
-
 
 def plot_surface(z: np.ndarray) -> None:
     """Make a surface plot from a 2d array."""
