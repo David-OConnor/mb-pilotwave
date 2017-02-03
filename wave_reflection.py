@@ -1,4 +1,8 @@
+# This file contains functions used to calculate wave reflections off a wall.
+
+
 from functools import partial
+from math import pi as π
 from typing import Iterator, List, Tuple
 
 import numba
@@ -6,7 +10,9 @@ import numpy as np
 from numpy import sqrt, sin, cos, tan, arctan2
 import scipy.optimize
 
-from drops import D, τ
+# D is duplicated from drops; re-define here to avoid a circular import.
+D = 76  # Cylindrical bath container diameter, mm  # todo should be x 10**-3 I think.
+τ = 2 * π
 
 jit = numba.jit(nopython=True)
 

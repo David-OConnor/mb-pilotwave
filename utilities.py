@@ -15,6 +15,7 @@ def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1,
                plot=True, corral=False) -> np.ndarray:
     """Calculate a wave's effect on a 2d field."""
     # Be careful about resolution; computation time is proportional to its square.
+    D = 76  # todo temp
     grid_x = (-int(D/2), int(D/2))
     grid_y = (-int(D/2), int(D/2))
 
@@ -26,6 +27,7 @@ def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1,
     scaled_x = (grid_x[0] * resolution, grid_x[1] * resolution)
     scaled_y = (grid_y[0] * resolution, grid_y[1] * resolution)
 
+    print(scaled_x, scaled_y)
     range_x = range(*scaled_y)
     range_y = range(*scaled_x)
 
@@ -42,8 +44,9 @@ def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1,
                                                        corral=corral)
 
     if plot:
-        plt.imshow(h, extent=[*grid_x, *grid_y])
-        plt.colorbar()
+        fig, ax = plt.subplots()
+        cax = ax.imshow(h, extent=[*grid_x, *grid_y])
+        fig.colorbar(cax)
         # plot_surface(h)
 
     return h

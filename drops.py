@@ -7,13 +7,17 @@ import matplotlib.pyplot as plt
 import numba
 import numpy as np
 from numpy import pi as π, sqrt, cos, sin, tan, arctan2, exp, log
+from scipy import integrate
 
+from constants import *
 from wave_reflection import find_reflection_points
+import vertical
+
 
 jit = numba.jit(nopython=True)
 
-
 τ = 2 * π
+
 
 # Assume we're not modeling the up and down motions; each simulation tick
 # represents the particle impacting the grid
@@ -21,96 +25,11 @@ jit = numba.jit(nopython=True)
 # todo improved bounce/contact mechanics; tranfer energy to the drop from oscillation, and do more
 # todo than a simple reflection.  Find the force of each impact; put into wave height eq.
 
-# 2D grid, simulatinga a vibrating silicon/oil field. Positive values indicate
-# a height above neutral; negative below.
-GRID_SIZE = (200, 200)
 
-RUN_TIME = 7400  # in ticks
-
-dt = 1  # Seconds per tick
-
-PARTICLE_MASS = 1  # Assumed to be a point; ie no volume.
-
-# MBI / M&B = Malacek and Bush, 2013
+# MBI / MBII = Malacek and Bush companion papers, 2013
 # JFM = A trajectory equation for walking droplets: hydrodynamic pilot-wave theory
 # by Anand U. Oza, Rodolfo R. Rosales and John W. M. Bush
 
-# MBI has data for two drops:
-# A: rho= 949, sigma = 20.6*10**-3, ν=20
-# B: rho=960, sigma = 20.8 * 10**-3, and ν = 50cSt
-
-# todo meters vs mm for distance??
-# System paramters,  from MBI, Table 1, P 617.
-# todo watch the metric units, ie mm vs m; papers are sometimes unclear or inconsistent
-# todo ie implicity conversions in formulas vice table values.
-R_0 = 0.40 * 10**-3  # Undeformed drop radius.  0.07 - 0.8mm
-ρ = 949  # Silicone oil density (droplet and bed), 949 - 960 kg/m^3
-ρ_a = 1.2  # Air density, kg/m^3
-σ = 20.6 * 10 ** -3  # Surface tension, N/m/  20-21 mN * m**-1
-g = 9.81  # Gravity, in m * s^-2.  Paper uses positive value??
-V_in = 0.5  # Drop incoming speed; 0.1 - 1 m*s**-1
-V_out = 0.5  # Drop outgoing speed; 0.1 - 1 m*s**-1
-μ = 10**-2  # Drop dynamic viscocity. 10**-3 - 10**-1 kg*m^-1*s^-1
-μ_a = 1.84 * 10 ** -5  # Air dynamic viscocity. 1.84 * 10**-5 kg*m^-1*s^-1 Constant?
-ν = 20  # Drop kinematic viscocity; 10-100 cSt  MBI tested at 20 and 50.
-ν_a = 15  # Air kinematic viscosity; 15 cSt
-T_C = 10 * 10**-3  # Contact time, 1-20ms # Shown as tau elsewhere in MBI???
-# C_r Coefficient of restitution; 0-0.4
-f = 80  # Bath shaking frequency.  40 - 200 Hz
-# γ corresponds to path memory; high gamma means high memory
-γ = g * 4.2  # Peak bath vibration acceleration, m * s^-2 0-70
-ω = τ * f  # = 2π*f Bath angular frequency.  250 - 1250 rad s^-1
-# todo note: Poor notation on the paper for weber number; missing parents with rho and R_0.
-ω_D = (σ / (ρ * R_0 ** 3)) ** (1 / 2)  # Characteristic drop oscillation freq.  300 - 5000s^-1
-# todo weber's not coming out right...
-We = ρ * R_0 * V_in**2 / σ  # Weber number; 0.01 - 1
-Bo = ρ * g * R_0**2 / σ  # Bond number.  10**-3 - .04.
-Oh = μ * (σ*ρ*R_0)**(-1/2)  # Drop Ohnsesorge number. 0.004-2
-# todo oha not in range.
-Oh_a = μ_a * (σ*ρ*R_0)**(-1/2)  # Air Ohnesorge number. 10**-4 - 10**-3
-Ω = τ*f * sqrt(ρ * R_0**3 / σ)  # Vibration number.  0 - 1.4
-Γ = γ / g  # Peak non-dimensional bath acceleration.  0 - 7
-
-
-
-# More system parameters; MBI p 645. Use version of 20 cSt drop.
-
-bath_depth = 9 * 10**-3  # mm
-D = 76  # Cylindrical bath container diameter, mm  # todo should be x 10**-3 I think.
-# Effective gravity is g + γ*sin(τ*f*t)
-# C is the non-dimensional drag cofficient. Depends weakly on system params.
-# C ranges from .17 to .33 for walking regime, but .17 matches data from M&B paper.
-C = .17
-# ΓF  From lookup table?
-
-m = .001  # Not in paper; temporary mass I'm using.
-
-# Use the global lookup table for these values??
-
-
-# The following are numerically derived, found in a table MBI p 645.
-# Use version of 20 cSt 80hz drop for now.
-
-# These constants are foudd intables in M&B
-Γ_F = 4.220
-k_C__k_F = .971  # ratio of k_C to k_F
-τ_F__τ_D = 1.303
-
-# I think we can do k_C = k_F: "The critical (most unstable) wavenumber k C is
-# found to be close to the Faraday wavenumber k F , given by the dispersion
-# relation (Benjamin & Ursell 1954): k_F**3 + Bo * k_F = (1/4) * Ω**2.
-# This doesn't come out neatly solving for k_F!. but JFM has an approximation:
-k_F = 1.25  # mm**-1
-k_C = k_F  # k_C is the critical (most unstable) wavenumber.
-
-# M&B also includes it as τ_D = (Oh_e * k_C**2) ** -1. Not sure what Oh_e is, so can't compare.
-# todo I think we can approximate Oh_e as just Oh? In that case, this value's wack?
-τ_D = 1 / 54.9  # Decay time (s) of waves without forcing, from JFM (T_D) there
-
-
-
-
-############
 
 # an Impact is an event of the drop hitting the surface.
 Impact = namedtuple('Impact', ['t', 'x', 'y', 'F'])  # Add other aspects like speed, force etc.
@@ -192,10 +111,9 @@ def surface_height(t: float, r: float, v: float) -> float:
 
     term1 = (4*sqrt(τ))/(3*sqrt(τ_)) * (k_C**2*k_F*Oh_e**(1/2))/(3*k_F**2 + Bo)
 
-
     # F is the Dimensionless reaction force acting on the drop.
 
-    # The formula in M&B calls for an integration of F over the contact time;
+    # The formula in MBII calls for an integration of F over the contact time;
     # The info clarifying that force can be approximated by a point force doens't
     # explicitly, AFAICT, say how to approximate this point force, but includes
     # this statement about change of momentum; and since integrating momentum over
@@ -282,18 +200,6 @@ def surface_height_gradient(t: float, impacts_: Iterable[Impact], x: float, y: f
     return (h_x_right - h_x_left) / δ, (h_y_right - h_y_left) / δ
 
 
-def surface_height_gradient2(t, impacts_: Iterable[Impact], x, y) -> Tuple[float, float]:
-    # todo no worky with numba
-    """Create a linear approximation, for finding the slope at a point.
-    x and y are points.  t is the time we're taking the derivative.
-    Used to calculate bounce mechanics."""
-    import autograd
-
-    height = partial(net_surface_height, t, impacts_)
-    grad = autograd.grad(height)
-    return grad(x, y)
-
-
 @jit
 def surface_oscilation(t: float) -> Tuple[float, float, float]:
     """Return the surface's height and velocity at time t due to its oscillation;
@@ -312,6 +218,7 @@ def surface_oscilation(t: float) -> Tuple[float, float, float]:
 #     # FT is the trangental component of the reaction force.
 #     F = 0
 #     FT = -F*(δh(X, τ)) / (δX)
+
 
 # @jit
 def bounce_v(grad_x: float, grad_y: float, vx: float, vy: float, vz: float) -> np.ndarray:
@@ -383,7 +290,8 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple:
     borders = [(0, 200, 500, 200)]
 
     num_drops, drop_len = drops.shape
-    # The solution will have three axis: time, drop, and drop feature. (features are position, velocity etc etc)
+    # The solution will have three axis: time, which drop, and drop conditions
+    # (conditions are position, velocity etc etc)
     soln = np.empty([len(t), num_drops, drop_len])
     soln[0] = drops
 
@@ -392,48 +300,71 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple:
         h = t[i + 1] - t[i]  # time step
 
         for j in range(num_drops):
-            y_to_integrate = soln[i, j]  # todo ??
-            y_drop = rk4(rhs, y_to_integrate, t_, h, args=())  # no bounce
+            drop_conditions = soln[i, j]  # todo ??
+            sx, sy, sz, vx, vy, vz = drop_conditions
 
-            sx, sy, sz, vx, vy, vz = y_to_integrate
-
+            # todo code to limit checks for contact, for speed reasons
+            # todo put it back to see if it helps
             if sz <= 10 and vz < 0:  # todo lower sz limit.
                 sample_pt = np.array([sx, sy])
-                height_below_drop = net_surface_height(t_, impacts_, sample_pt, corral=corral)
+                # The surface height, compared to a reference avg of 0.
+                surface_h_below_drop = net_surface_height(t_, impacts_, sample_pt, corral=corral)
 
                 # Take into account the surface oscillation; it moves the whole
                 # surface uniformly.  Also, reference the bottom of the drop
                 # rather than the top by shifting down half a radius.
-                height_below_drop -= (surface_oscilation(t_)[0] + R_0/2)
+                surface_h_below_drop -= (surface_oscilation(t_)[0] + R_0)
 
+            else:
+                surface_h_below_drop = sz - 10  # This means trigger the airborne integrator.
+
+
+            if sz <= surface_h_below_drop:
+                # Model contact period with vertical functions from MBI
                 # An impct is detected.
-                if sz <= height_below_drop:
-                    grad_x, grad_y = surface_height_gradient(t_, impacts_, sx, sy)
-                    # This bounce velocity change overrides the default, of last step's accel.
-                    vx_bounce, vy_bounce, vz_bounce = bounce_v(grad_x, grad_y,
-                                                               vx, vy, vz)
 
-                    # todo here, or in bounce_v, goes the force imparted on the drop:
-                    # todo −mg∇h(x_p, t) horizontal force??
 
-                    # todo what next?
-                    bath_v_start = surface_oscilation(t)[1]
-                    bath_v_end = surface_oscilation(t_ + T_C)[1]
+                # Hand off vertical mechanics to a separate integrator.
+                τ_start = ω_D * t_
 
-                    bath_a_start = surface_oscilation(t)[2]
-                    bath_a_end = surface_oscilation(t_ + T_C)[2]
 
-                    # todo is it this simple? add the bath velocity at the end of
-                    # todo the bounce. Can't be, since it's net is 0; we need to add
-                    # todo energy.
-                    # vz_bounce += bath_v_end
 
-                    v = sqrt(vx**2 + vy**2 + vz**2)
-                    impacts_.append(Impact(t_, sx, sy, v))
+                # grad_x, grad_y = surface_height_gradient(t_, impacts_, sx, sy)
+                # # This bounce velocity change overrides the default, of last step's accel.
+                #
+                # vx_bounce, vy_bounce, vz_bounce = bounce_v(grad_x, grad_y,
+                #                                            vx, vy, vz)
+                #
+                # # todo here, or in bounce_v, goes the force imparted on the drop:
+                # # todo −mg∇h(x_p, t) horizontal force??
+                #
+                # # todo what next?
+                # bath_v_start = surface_oscilation(t_)[1]
+                # bath_v_end = surface_oscilation(t_ + T_C)[1]
+                #
+                # bath_a_start = surface_oscilation(t_)[2]
+                # bath_a_end = surface_oscilation(t_ + T_C)[2]
+                #
+                # # todo is it this simple? add the bath velocity at the end of
+                # # todo the bounce. Can't be, since it's net is 0; we need to add
+                # # todo energy.
+                # # vz_bounce += bath_v_end
+                #
+                # v = sqrt(vx ** 2 + vy ** 2 + vz ** 2)
+                # impacts_.append(Impact(t_, sx, sy, v))
+                #
+                # # Overwrite the prev-calculated non-bounce integration with
+                # # these calculated values.
+                # y_drop = sx, sy, sz, vx_bounce, vy_bounce, vz_bounce
 
-                    # Overwrite the prev-calculated non-bounce integration with
-                    # these calculated values.
-                    y_drop = sx, sy, sz, vx_bounce, vy_bounce, vz_bounce
+
+
+            else:
+                # Model using a simple airborne kinematics integrator.
+
+                # Integrate the drop's motion through the air.
+                y_drop = rk4(rhs, drop_conditions, t_, h, args=())  # no bounce
+
 
             soln[i+1, j] = y_drop
 

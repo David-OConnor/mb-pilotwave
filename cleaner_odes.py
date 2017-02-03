@@ -1,7 +1,7 @@
 # Holding code for cleaner ODEs than the one currently used; the one in drops.py
 # is messy and specific, but the only way I've been able to make it work.
 
-
+import numpy as np
 from scikits.odes import dae
 from scikits.odes.sundials import ida
 from scipy.optimize import fsolve
@@ -81,10 +81,6 @@ def run() -> np.ndarray:
     return rk4_odeint(ode_rhs, y0, t, args=(drop_len,)), t, impacts
 
 
-
-
-
-
 def rk4_odeint(f, y0: Iterable, t: np.ndarray, args: Tuple=()) -> np.ndarray:
     """Interface for RK4 ODE solver, similar to scipy.integrate.odeint."""
     y0 = np.array(y0)
@@ -108,8 +104,6 @@ def rk4_odeint(f, y0: Iterable, t: np.ndarray, args: Tuple=()) -> np.ndarray:
 
         result[i+1] = y
     return result
-
-
 
 
 def skode_test():
