@@ -1,8 +1,15 @@
-from numpy import sqrt, pi as π
+# Load this file from all others with from constants import *. in addition to constants,
+# it includes standard imports like numpy and numba.
+
+from typing import Iterator, Iterable, List, Tuple
+
+import numba
+import numpy as np
+from numpy import pi as π, sqrt, cos, sin, tan, arctan2, exp, log
 from scipy.constants import g
 
+jit = numba.jit(nopython=True)
 
-τ = 2 * π
 
 # System paramters, from MBII, Table 1, and MBI table 1.
 
@@ -32,7 +39,7 @@ f = 80  # Bath shaking frequency.  40 - 200 Hz
 γ = g * 4.2  # Peak bath vibration acceleration, m * s^-2 0-70
 
 # Derived from constants
-ω = τ * f  # = 2π*f Bath angular frequency.  250 - 1250 rad s^-1
+ω = 2*π * f  # = 2π*f Bath angular frequency.  250 - 1250 rad s^-1
 ω_D = sqrt(σ / (ρ * R_0**3))  # Characteristic drop oscillation freq.  300 - 5000 rad*s^-1
 
 # Dynamically Calculate Weber number based on impact velocity
@@ -41,7 +48,7 @@ f = 80  # Bath shaking frequency.  40 - 200 Hz
 Bo = (ρ * g * R_0**2) / σ  # Bond number.  10**-3 - .04.
 Oh = μ * (σ*ρ*R_0)**(-1/2)  # Drop Ohnsesorge number. 0.004-2
 Oh_a = μ_a * (σ*ρ*R_0)**(-1/2)  # Air Ohnesorge number. 10**-4 - 10**-3
-Ω = τ*f * sqrt(ρ * R_0**3 / σ)  # Vibration number.  0 - 1.4
+Ω = 2*π*f * sqrt(ρ * R_0**3 / σ)  # Vibration number.  0 - 1.4
 Γ = γ / g  # Peak non-dimensional bath acceleration.  0 - 7
 
 

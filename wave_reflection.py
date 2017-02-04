@@ -1,20 +1,15 @@
 # This file contains functions used to calculate wave reflections off a wall.
 
-
 from functools import partial
-from math import pi as π
-from typing import Iterator, List, Tuple
 
-import numba
-import numpy as np
-from numpy import sqrt, sin, cos, tan, arctan2
 from scipy import optimize
 
-# D is duplicated from drops; re-define here to avoid a circular import.
-D = 76  # Cylindrical bath container diameter, mm  # todo should be x 10**-3 I think.
-τ = 2 * π
+from constants import *
 
-jit = numba.jit(nopython=True)
+
+# D is duplicated from constants; re-define here to avoid a circular import.
+D = 76  # Cylindrical bath container diameter, mm  # todo should be x 10**-3 I think.
+
 
 # Use arrays instead of Point objects, to make working with numba easiser.
 # todo sort out Points vs arrays; numba is sensitive! Looks like arrays result in
@@ -69,8 +64,8 @@ def cast_ray(impact: np.ndarray, sample_pt: np.ndarray, center: np.ndarray, θiw
     collision_pt = simple_collision(impact, center, θiw)
 
     # print(collision_pt, 'colpt')
-    θw = arctan2(collision_pt[1], collision_pt[0]) % τ  # normal angle to the wall
-    θw = (θw + τ/2) % τ
+    θw = arctan2(collision_pt[1], collision_pt[0]) % (2*π)  # normal angle to the wall
+    θw = (θw + π) % (2*π)
 
     unit_normal = np.array([cos(θw), sin(θw)])
     v = np.array([cos(θiw), sin(θiw)])
@@ -129,7 +124,7 @@ def find_wall_collisions(impact: np.ndarray, sample_pt: np.ndarray, center: np.n
     # Circular corral only for now.
     # Create a grid system centered on the corral center; find impact and the point
     # we're examining in that grid.
-    # Take this many sample points between 0 and τ for rough root estimates.
+    # Take this many sample points between 0 and 2*pi for rough root estimates.
     ROUGH_SAMPLE_PTS = 100  # Higher is more accurate, but slower
     # Check distances below this value for roots with fsolve.
     THRESH_SCALER = .4  # scaler; scale by this amount each time
@@ -138,7 +133,7 @@ def find_wall_collisions(impact: np.ndarray, sample_pt: np.ndarray, center: np.n
     cast = partial(cast_ray, impact, sample_pt, center)
     cast_fsolvable = partial(cast_ray_fsolvable, impact, sample_pt, center)
 
-    zones = [(0, τ)]  # Initial zone; all angles.
+    zones = [(0, 2*π)]  # Initial zone; all angles.
 
     # Fsolve will smooth over the result, so n need not be high.
     n = 3  # Number of iterations to go through, each narrowing down the possible roots.

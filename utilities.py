@@ -1,14 +1,13 @@
 from typing import Iterable, Tuple
 from itertools import product
 
-import numba
 import numpy as np
 from matplotlib import pyplot as plt
 import matplotlib.animation as animation
-from numpy import sin, cos
+from numpy import sin, cos, pi as π
 
-import drops, wave_reflection
-from drops import D, τ
+import drops, waves, wave_reflection
+from constants import D
 
 
 def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1,
@@ -40,7 +39,7 @@ def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1,
         index_x = int(array_width / 2 + sx * resolution)
         index_y = int(array_height / 2 - sy * resolution) - 1
 
-        h[index_y, index_x] = drops.net_surface_height(t, impacts, np.array([sx, sy]),
+        h[index_y, index_x] = waves.net_surface_height(t, impacts, np.array([sx, sy]),
                                                        corral=corral)
 
     if plot:
@@ -57,7 +56,7 @@ def reflection_field(impact: np.ndarray, center: np.ndarray, θiw: float) -> np.
     point in a circle.  Useful for seeing a ray's reflected path."""
     result = np.zeros([D + 5, D + 5])
 
-    range_θ = np.linspace(0, τ, 1000)
+    range_θ = np.linspace(0, 2*π, 1000)
     range_r = np.linspace(0, D/2, 100)
 
     for θ, r in product(range_θ, range_r):
