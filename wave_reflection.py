@@ -8,7 +8,7 @@ from typing import Iterator, List, Tuple
 import numba
 import numpy as np
 from numpy import sqrt, sin, cos, tan, arctan2
-import scipy.optimize
+from scipy import optimize
 
 # D is duplicated from drops; re-define here to avoid a circular import.
 D = 76  # Cylindrical bath container diameter, mm  # todo should be x 10**-3 I think.
@@ -167,7 +167,7 @@ def find_wall_collisions(impact: np.ndarray, sample_pt: np.ndarray, center: np.n
 
     # Find precise roots; the guesses should be pretty good, but let fsolve refine.
     # Using fsolve doesn't appreciably add to solve time.
-    θ_roots = (scipy.optimize.fsolve(cast_fsolvable, guess)[0] for guess in θ_guesses)
+    θ_roots = (optimize.fsolve(cast_fsolvable, guess)[0] for guess in θ_guesses)
     # θ_roots = list(θ_roots)
     # print(θ_roots, 'roots')
     return map(partial(simple_collision, impact, center), θ_roots)

@@ -4,11 +4,10 @@
 import numpy as np
 from scikits.odes import dae
 from scikits.odes.sundials import ida
-from scipy.optimize import fsolve
+from scipy import optimize
 
 from scikits.odes import dae
 from scikits.odes.sundials import ida
-from scipy.optimize import fsolve
 
 import PyDSTool
 

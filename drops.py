@@ -250,8 +250,9 @@ def rk4(f, y: Iterable, t: float, h: float, args: Tuple) -> np.ndarray:
     return y + (k1 + 2*(k2 + k3) + k4) / 6
 
 
-def rhs(y: np.ndarray, t: np.ndarray) -> Tuple:
-    """Right hand integration function, simplified for one drop; no bounce"""
+def rhs_airborne(y: np.ndarray, t: np.ndarray) -> Tuple:
+    """Right hand integration function for drop's airborne motion, simplified for one drop;
+    no bounce"""
     sx, sy, sz, vx, vy, vz = y
 
     # # Calculate drag force for accelerations. The z component also includes gravity.
@@ -267,6 +268,9 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple:
     with events. Events with one drop, or multiple drops with no events work
     with more elegant solutions, like scipy's odeint or the rk4_odeint above."""
     impacts_ = []
+
+    # Vertical contact integration precision
+    VERTICAL_PRECISON = int(1e5)
 
     # todo model two separate conditions: drop in flight, and drop in contact
     # todo with surface.
@@ -285,6 +289,17 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple:
         # [95, 95, 10, 0, 0, 0],
 
     ])
+    # in_contact values correspond to the different drops. False means the drop's
+    # airborne; True means it's in contact with the bath.
+    in_contact = np.zeros(drops.shape[0], dtype=bool)
+
+    # contact_motion holds the precalculated values from the vertical-motion contact
+    # integrator. Axis 0: drops. Axis 1: time, Axis 2: (all dimensioned), vertical position, vert velocity
+    contact_motion = np.zeros([drops.shape[0], VERTICAL_PRECISON, 2])
+
+    # Drop exit conditions from contact: Axis 0: drops. Axis 1: (all dimensioned) time, height, velocity.
+    # exit_conditions = np.zeros([drops.shape[0], 3])
+    exit_time = np.zeros(drops.shape[0])
 
     # Border format is (x1, y1, x2, y2), ie a line connecting two points.
     borders = [(0, 200, 500, 200)]
@@ -293,77 +308,114 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple:
     # The solution will have three axis: time, which drop, and drop conditions
     # (conditions are position, velocity etc etc)
     soln = np.empty([len(t), num_drops, drop_len])
-    soln[0] = drops
+    soln[0] = drops  # Set initial condition.
 
     for i in range(len(t) - 1):
         t_ = t[i]  # current  time
         h = t[i + 1] - t[i]  # time step
 
         for j in range(num_drops):
-            drop_conditions = soln[i, j]  # todo ??
+            drop_conditions = soln[i, j]
             sx, sy, sz, vx, vy, vz = drop_conditions
 
-            # todo code to limit checks for contact, for speed reasons
-            # todo put it back to see if it helps
-            if sz <= 10 and vz < 0:  # todo lower sz limit.
-                sample_pt = np.array([sx, sy])
-                # The surface height, compared to a reference avg of 0.
-                surface_h_below_drop = net_surface_height(t_, impacts_, sample_pt, corral=corral)
+            # Take a value from the vertical motion in-contact integrator;
+            # we've already pre-generated it.
+            if in_contact[j]:
+                # Find the row in contact motion that's closest to the current time.
+                # todo instead of finding just the closest, interpolate for more precision.
+                contact_mot_ix = np.argmin(np.abs(contact_motion[j, :, 0] - t_))
 
-                # Take into account the surface oscillation; it moves the whole
-                # surface uniformly.  Also, reference the bottom of the drop
-                # rather than the top by shifting down half a radius.
-                surface_h_below_drop -= (surface_oscilation(t_)[0] + R_0)
+                # todo sz_contact should be  zero, until we include bath motion.
+                sz_contact, vz_contact = contact_motion[j, contact_mot_ix]
+                # todo add back in horizontal dynamics
+                # todo how does bath motion affect this?? Add it in here??
+                sx, sy, sz, vx, vy, vz = 0, 0, sz_contact, 0, 0, vz_contact
+                soln[i, j] = sx, sy, sz, vx, vy, vz
 
+                # We've already calculated when the exit will occur; check it against current time.
+                if t_ >= exit_time[j]:
+                    # Another approach: Use the stored exit contitions for height and velocity.
+                    # instead of using the look-up above.
+                    # The drop's now airborne; switch to that integrator next time.
+                    # Leave in_contact, contact_motion, and exit_time blank while the drop's airborne.
+                    in_contact[j], contact_motion[j], exit_time[j] = False, 0, 0
+
+                continue
+
+            # If not in contact, either use an airborne-kinematics integrator, or start
+            # an in-contact integrator.
             else:
-                surface_h_below_drop = sz - 10  # This means trigger the airborne integrator.
+                # Limit checks for contact when the drop's high or going up, for performance reasons.
+                if sz <= 10 and vz < 0:  # todo lower sz limit.
+                    # There might be an impact; calculate bath height and check.
+                    sample_pt = np.array([sx, sy])
+                    # The surface height, compared to a reference avg of 0.
+                    surface_h_below_drop = net_surface_height(t_, impacts_, sample_pt, corral=corral)
+
+                    # Take into account the surface oscillation; it moves the whole
+                    # surface uniformly.  Also, reference the bottom of the drop
+                    # rather than the top by shifting down half a radius.
+                    surface_h_below_drop -= (surface_oscilation(t_)[0] + R_0)
+
+                else:
+                    surface_h_below_drop = sz - 10  # This means trigger the airborne integrator.
+
+                if sz <= surface_h_below_drop:
+                    # We've found an impact.
+                    in_contact[j] = True
+                    # Model contact period with vertical functions from MBI
+                    # Hand off vertical mechanics to a separate integrator.
+
+                    # Dimensionless contact time should be about 5; integrate longer
+                    # to be conservative.
+                    τ_start = ω_D * t_
+                    τ_end = τ_start + 10
+                    contact_τ = np.linspace(τ_start, τ_end, VERTICAL_PRECISON)
+
+                    # todo instead of just vertical speed, perhaps use total?
+                    contact_mot = vertical.log_spring(contact_τ, vz)
+                    contact_motion[j, :] = vertical.dimensionize_motion(contact_mot)
+
+                    exit_conds = vertical.find_exit_conditions(contact_τ, contact_motion[j, :])
+                    # exit_conditions[j, :] = vertical.dimensionize_exit(*exit_conds)
+                    exit_time[j] = exit_conds[0] / ω_D  # Dimensionalize time.
 
 
-            if sz <= surface_h_below_drop:
-                # Model contact period with vertical functions from MBI
-                # An impct is detected.
-
-
-                # Hand off vertical mechanics to a separate integrator.
-                τ_start = ω_D * t_
-
-
-
-                # grad_x, grad_y = surface_height_gradient(t_, impacts_, sx, sy)
-                # # This bounce velocity change overrides the default, of last step's accel.
-                #
-                # vx_bounce, vy_bounce, vz_bounce = bounce_v(grad_x, grad_y,
-                #                                            vx, vy, vz)
-                #
-                # # todo here, or in bounce_v, goes the force imparted on the drop:
-                # # todo −mg∇h(x_p, t) horizontal force??
-                #
-                # # todo what next?
-                # bath_v_start = surface_oscilation(t_)[1]
-                # bath_v_end = surface_oscilation(t_ + T_C)[1]
-                #
-                # bath_a_start = surface_oscilation(t_)[2]
-                # bath_a_end = surface_oscilation(t_ + T_C)[2]
-                #
-                # # todo is it this simple? add the bath velocity at the end of
-                # # todo the bounce. Can't be, since it's net is 0; we need to add
-                # # todo energy.
-                # # vz_bounce += bath_v_end
-                #
-                # v = sqrt(vx ** 2 + vy ** 2 + vz ** 2)
-                # impacts_.append(Impact(t_, sx, sy, v))
-                #
-                # # Overwrite the prev-calculated non-bounce integration with
-                # # these calculated values.
-                # y_drop = sx, sy, sz, vx_bounce, vy_bounce, vz_bounce
+                    # grad_x, grad_y = surface_height_gradient(t_, impacts_, sx, sy)
+                    # # This bounce velocity change overrides the default, of last step's accel.
+                    #
+                    # vx_bounce, vy_bounce, vz_bounce = bounce_v(grad_x, grad_y,
+                    #                                            vx, vy, vz)
+                    #
+                    # # todo here, or in bounce_v, goes the force imparted on the drop:
+                    # # todo −mg∇h(x_p, t) horizontal force??
+                    #
+                    # # todo what next?
+                    # bath_v_start = surface_oscilation(t_)[1]
+                    # bath_v_end = surface_oscilation(t_ + T_C)[1]
+                    #
+                    # bath_a_start = surface_oscilation(t_)[2]
+                    # bath_a_end = surface_oscilation(t_ + T_C)[2]
+                    #
+                    # # todo is it this simple? add the bath velocity at the end of
+                    # # todo the bounce. Can't be, since it's net is 0; we need to add
+                    # # todo energy.
+                    # # vz_bounce += bath_v_end
+                    #
+                    # v = sqrt(vx ** 2 + vy ** 2 + vz ** 2)
+                    # impacts_.append(Impact(t_, sx, sy, v))
+                    #
+                    # # Overwrite the prev-calculated non-bounce integration with
+                    # # these calculated values.
+                    # y_drop = sx, sy, sz, vx_bounce, vy_bounce, vz_bounce
 
 
 
-            else:
-                # Model using a simple airborne kinematics integrator.
+                else:
+                    # Model using a simple airborne kinematics integrator.
 
-                # Integrate the drop's motion through the air.
-                y_drop = rk4(rhs, drop_conditions, t_, h, args=())  # no bounce
+                    # Integrate the drop's motion through the air.
+                    y_drop = rk4(rhs_airborne, drop_conditions, t_, h, args=())  # no bounce
 
 
             soln[i+1, j] = y_drop

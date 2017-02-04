@@ -19,6 +19,7 @@ R_0 = 0.40e-3  # Undeformed drop radius.
 ρ = 949  # Silicone oil density (droplet and bed), 949 and 960 kg/m^3 tested in MBI.
 ρ_a = 1.2  # Air density, kg/m^3
 σ = 20.6e-3  # Surface tension, N/m  20-21 mN * m**-1. MBI tested at 20.6 and 28.8e-3
+# Use the integrator to find incoming and outgoing speeds.
 V_in = 0.2  # Drop incoming speed; 0.1 - 1 m*s**-1
 V_out = 0.5  # Drop outgoing speed; 0.1 - 1 m*s**-1
 μ = 1e-2  # Drop dynamic viscocity. 10**-3 - 10**-1 kg*m^-1*s^-1
@@ -33,7 +34,8 @@ f = 80  # Bath shaking frequency.  40 - 200 Hz
 # Derived from constants
 ω = τ * f  # = 2π*f Bath angular frequency.  250 - 1250 rad s^-1
 ω_D = sqrt(σ / (ρ * R_0**3))  # Characteristic drop oscillation freq.  300 - 5000 rad*s^-1
-# todo note: Poor notation on MBI for weber number; missing parenthesis with rho and R_0.
+
+# Dynamically Calculate Weber number based on impact velocity
 We = (ρ * R_0 * V_in**2) / σ  # Weber number; Dimensionless. 0.01 - 1
 Bo = (ρ * g * R_0**2) / σ  # Bond number.  10**-3 - .04.
 Oh = μ * (σ*ρ*R_0)**(-1/2)  # Drop Ohnsesorge number. 0.004-2
