@@ -1,6 +1,4 @@
-from math import pi as π
-
-from numpy import sqrt
+from numpy import sqrt, pi as π
 from scipy.constants import g
 
 
@@ -19,9 +17,11 @@ R_0 = 0.40e-3  # Undeformed drop radius.
 ρ = 949  # Silicone oil density (droplet and bed), 949 and 960 kg/m^3 tested in MBI.
 ρ_a = 1.2  # Air density, kg/m^3
 σ = 20.6e-3  # Surface tension, N/m  20-21 mN * m**-1. MBI tested at 20.6 and 28.8e-3
+
 # Use the integrator to find incoming and outgoing speeds.
-V_in = 0.2  # Drop incoming speed; 0.1 - 1 m*s**-1
-V_out = 0.5  # Drop outgoing speed; 0.1 - 1 m*s**-1
+# V_in = 0.2  # Drop incoming speed; 0.1 - 1 m*s**-1
+# V_out = 0.5  # Drop outgoing speed; 0.1 - 1 m*s**-1
+
 μ = 1e-2  # Drop dynamic viscocity. 10**-3 - 10**-1 kg*m^-1*s^-1
 μ_a = 1.84e-5  # Air dynamic viscocity. 1.84 * 10**-5 kg*m^-1*s^-1 Constant?
 ν = 20  # Drop kinematic viscocity; 10-100 cSt  MBI tested at 20 and 50.
@@ -36,7 +36,8 @@ f = 80  # Bath shaking frequency.  40 - 200 Hz
 ω_D = sqrt(σ / (ρ * R_0**3))  # Characteristic drop oscillation freq.  300 - 5000 rad*s^-1
 
 # Dynamically Calculate Weber number based on impact velocity
-We = (ρ * R_0 * V_in**2) / σ  # Weber number; Dimensionless. 0.01 - 1
+# We = (ρ * R_0 * V_in**2) / σ  # Weber number; Dimensionless. 0.01 - 1
+
 Bo = (ρ * g * R_0**2) / σ  # Bond number.  10**-3 - .04.
 Oh = μ * (σ*ρ*R_0)**(-1/2)  # Drop Ohnsesorge number. 0.004-2
 Oh_a = μ_a * (σ*ρ*R_0)**(-1/2)  # Air Ohnesorge number. 10**-4 - 10**-3

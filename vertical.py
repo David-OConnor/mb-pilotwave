@@ -153,36 +153,40 @@ def lin_spring_analytic(τ_: np.array) -> np.ndarray:
     return Z_τ0 * np.exp(-D_*τ_ /2) * sin(sqrt(C_p) * τ_) / sqrt(C_p)
 
 
-# @jit   # Argwhere breaks jit?
-def find_exit_conditions(τ_: np.ndarray, soln: np.ndarray) -> Tuple[float, float, float]:
-    """Find the (all dimensionless) height, time, and velocity when the drop exits the bath."""
-    # Min and max times to look for the exit
-    times = (2., 10.)
+# # @jit   # Argwhere breaks jit?
+# def find_exit_conditions(τ_: np.ndarray, soln: np.ndarray) -> Tuple[float, float, float]:
+#     """Find the (all dimensionless) height, time, and velocity when the drop exits the bath."""
+#     # Min and max times to look for the exit
+#
+#     exit_range = (2., 10.)
+#     # This is the range we expect the exit to occur.
+#     exit_range = (τ_[0] + exit_range[0], τ_[0] + exit_range[1])
+#
+#     Z, v = soln[:, 0], soln[:, 1]
+#
+#     i_to_search = np.argwhere((τ_ > exit_range[0]) & (τ_ < exit_range[1]))
+#     # Index of the already-filtered indexes where the exit occurs.
+#     min_i = np.argmin(np.abs(Z[i_to_search]))
+#
+#     # Index twice to find the solution.
+#     return float(τ_[i_to_search][min_i]), float(Z[i_to_search][min_i]), float(v[i_to_search][min_i])
 
-    Z, v = soln[:, 0], soln[:, 1]
 
-    i_to_search = np.argwhere((τ_ > times[0]) & (τ_ < times[1]))
-    # Index of the already-filtered indexes where the exit occurs.
-    min_i = np.argmin(np.abs(Z[i_to_search]))
-
-    # Index twice to find the solution.
-    return float(τ_[i_to_search][min_i]), float(Z[i_to_search][min_i]), float(v[i_to_search][min_i])
-
-
-# @jit
-# def dimensionize_exit(τ_: float, Z: float, we: float) -> Tuple[float, float, float]:
-#     """Add dimensions to contact time, height, and weber number(velocity). Ie, use this
-#     for the exit conditions after contact."""
-#     return τ_ / ω_D, Z * R_0, sqrt((we * σ) / (ρ * R_0))
+@jit
+def dimensionize_exit(τ_: float, Z: float, we: float) -> Tuple[float, float, float]:
+    """Add dimensions to contact time, height, and weber number(velocity). Ie, use this
+    for the exit conditions after contact."""
+    return τ_ / ω_D, Z * R_0, sqrt((we * σ) / (ρ * R_0))
 
 
 @jit
 def dimensionize_motion(soln: np.ndarray) -> np.ndarray:
     """Re-dimensionalize arrays of position and velocity, as returned by the lin/log integrators
     for contact time."""
-    soln[:, 0] *= R_0
-    soln[:, 1] = sqrt((soln[:, 1] * σ) / (ρ * R_0))
-    return soln
+    soln2 = np.copy(soln)  # Don't want to modify soln in place!!
+    soln2[:, 0] *= R_0
+    soln2[:, 1] = sqrt((soln2[:, 1] * σ) / (ρ * R_0))
+    return soln2
 
 
 def remove_dimensions(z: float, t: float) -> Tuple[float, float]:

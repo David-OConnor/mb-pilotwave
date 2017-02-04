@@ -1,6 +1,6 @@
 from collections import namedtuple
 from functools import partial
-from typing import Tuple, Iterable
+from typing import Tuple, Iterable, List
 
 import brisk
 import matplotlib.pyplot as plt
@@ -209,7 +209,7 @@ def surface_oscilation(t: float) -> Tuple[float, float, float]:
 
     bath_accel = γ * cos(ω * t)  # integrate this to get velocity and position.
     bath_vel = γ * ω**-1 * sin(ω * t)  # + C
-    bath_height = -γ * ω**(-2) * cos(ω*t)  # + C*t
+    bath_height = -γ * ω**(-2) * cos(ω * t)  # + C*t
 
     return bath_height, bath_vel, bath_accel
 
@@ -263,7 +263,7 @@ def rhs_airborne(y: np.ndarray, t: np.ndarray) -> Tuple:
     return vx, vy, vz, ax, ay, az
 
 
-def ode_standalone(t: np.ndarray, corral=False) -> Tuple:
+def ode_standalone(t: np.ndarray, corral=False) -> Tuple[np.ndarray, List[Impact]]:
     """Purpose-built, non-general RK4 integrator for modelling multiple drops,
     with events. Events with one drop, or multiple drops with no events work
     with more elegant solutions, like scipy's odeint or the rk4_odeint above."""
@@ -277,8 +277,10 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple:
 
     # initial drop conditions: sx, sy, sz, vx, vy, vz
     # Per MBI, initial conditions play little role in subsequent dynamics.
+    # Set initial height low for now; odd things happen with vert dynamics if the
+    # impact velocity is too high.
     drops = np.array([
-        [0, 0, 1, .1, .1, 0],
+        [0, 0, .001, .1, .1, 0],
         # [100, 110, 10, 0, 0, 0],
         # [100, 95, 10, 0, 0, 0],
         # [105, 100, 10, 0, 0, 0],
@@ -299,10 +301,15 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple:
 
     # Drop exit conditions from contact: Axis 0: drops. Axis 1: (all dimensioned) time, height, velocity.
     # exit_conditions = np.zeros([drops.shape[0], 3])
-    exit_time = np.zeros(drops.shape[0])
+    # exit_time = np.zeros(drops.shape[0])
+
+    # contact_t is used as a reference to map values from the vert motion (contact) integrator
+    # with the main one.
+    # contact_t Axis 0: Drops. Axis 1: dimensioned time.
+    contact_t = np.zeros([drops.shape[0], VERTICAL_PRECISON])
 
     # Border format is (x1, y1, x2, y2), ie a line connecting two points.
-    borders = [(0, 200, 500, 200)]
+    # borders = [(0, 200, 500, 200)]
 
     num_drops, drop_len = drops.shape
     # The solution will have three axis: time, which drop, and drop conditions
@@ -323,24 +330,31 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple:
             if in_contact[j]:
                 # Find the row in contact motion that's closest to the current time.
                 # todo instead of finding just the closest, interpolate for more precision.
-                contact_mot_ix = np.argmin(np.abs(contact_motion[j, :, 0] - t_))
+                contact_mot_ix = np.argmin(np.abs(contact_t - t_))
 
-                # todo sz_contact should be  zero, until we include bath motion.
+                # todo sz_contact should be zero, until we include bath motion.
                 sz_contact, vz_contact = contact_motion[j, contact_mot_ix]
+                bath_z, bath_v = surface_oscilation(t_)[:2]
+                # print(sz_contact, vz_contact, "CONTACTS")
+
+                # todo take out bath oscillation while troubleshooting.
+                # sz_contact_bathed = sz_contact + bath_z  # Add in bath height
+                # vz_contact_bathed = vz_contact + bath_v  # Add bath velocity # todo this probably isn't right!
+                sz_contact_bathed = sz_contact
+                vz_contact_bathed = vz_contact
+
                 # todo add back in horizontal dynamics
                 # todo how does bath motion affect this?? Add it in here??
-                sx, sy, sz, vx, vy, vz = 0, 0, sz_contact, 0, 0, vz_contact
-                soln[i, j] = sx, sy, sz, vx, vy, vz
+                sx, sy, sz, vx, vy, vz = 0, 0, sz_contact_bathed, 0, 0, vz_contact_bathed
+                soln[i+1, j] = sx, sy, sz, vx, vy, vz
 
-                # We've already calculated when the exit will occur; check it against current time.
-                if t_ >= exit_time[j]:
-                    # Another approach: Use the stored exit contitions for height and velocity.
-                    # instead of using the look-up above.
-                    # The drop's now airborne; switch to that integrator next time.
+                # Check for an exit into the air.
+                if sz_contact >= 0:  # Don't use the one that includes bath motion here.
+                    print(sz_contact, vz_contact, "BOUNCE CONDITIONS")
+
+
                     # Leave in_contact, contact_motion, and exit_time blank while the drop's airborne.
-                    in_contact[j], contact_motion[j], exit_time[j] = False, 0, 0
-
-                continue
+                    in_contact[j], contact_motion[j], contact_t[j] = False, 0, 0
 
             # If not in contact, either use an airborne-kinematics integrator, or start
             # an in-contact integrator.
@@ -361,6 +375,7 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple:
                     surface_h_below_drop = sz - 10  # This means trigger the airborne integrator.
 
                 if sz <= surface_h_below_drop:
+                    print(f"Impact: {t_}")
                     # We've found an impact.
                     in_contact[j] = True
                     # Model contact period with vertical functions from MBI
@@ -369,17 +384,32 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple:
                     # Dimensionless contact time should be about 5; integrate longer
                     # to be conservative.
                     τ_start = ω_D * t_
-                    τ_end = τ_start + 10
+                    τ_end = τ_start + 20  # todo tweak this val
                     contact_τ = np.linspace(τ_start, τ_end, VERTICAL_PRECISON)
+                    contact_t[j] = contact_τ / ω_D
 
                     # todo instead of just vertical speed, perhaps use total?
+                    # contact_mot stays dimensionless, with contact_motion[j] is dimensioned.
                     contact_mot = vertical.log_spring(contact_τ, vz)
                     contact_motion[j, :] = vertical.dimensionize_motion(contact_mot)
 
-                    exit_conds = vertical.find_exit_conditions(contact_τ, contact_motion[j, :])
-                    # exit_conditions[j, :] = vertical.dimensionize_exit(*exit_conds)
-                    exit_time[j] = exit_conds[0] / ω_D  # Dimensionalize time.
+                    # We're using non-dimensional for find_exit_conditions. Could use either approach.
 
+                    # print(exit_conds, "E CONDS")
+                    # plt.plot(contact_τ, contact_mot[:, 0])
+                    # return
+                    # plt.plot(contact_τ, contact_mot[:, 1])
+
+                    # exit_conds = vertical.find_exit_conditions(contact_τ, contact_mot)
+                    # exit_conditions[j, :] = vertical.dimensionize_exit(*exit_conds)
+                    # exit_time[j] = exit_conds[0] / ω_D  # Dimensionalize time.
+
+                    # Add an impact for processing the wave field.
+                    v = sqrt(vx ** 2 + vy ** 2 + vz ** 2)  # todo net v, or vz only??
+                    impacts_.append(Impact(t_, sx, sy, v))
+
+                    # todo currently we skip a frame of motion here; will have to
+                    # todo fix eventually.
 
                     # grad_x, grad_y = surface_height_gradient(t_, impacts_, sx, sy)
                     # # This bounce velocity change overrides the default, of last step's accel.
@@ -401,24 +431,19 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple:
                     # # todo the bounce. Can't be, since it's net is 0; we need to add
                     # # todo energy.
                     # # vz_bounce += bath_v_end
-                    #
-                    # v = sqrt(vx ** 2 + vy ** 2 + vz ** 2)
-                    # impacts_.append(Impact(t_, sx, sy, v))
+                   #
                     #
                     # # Overwrite the prev-calculated non-bounce integration with
                     # # these calculated values.
                     # y_drop = sx, sy, sz, vx_bounce, vy_bounce, vz_bounce
 
 
-
                 else:
-                    # Model using a simple airborne kinematics integrator.
+                    # The drop's airborne and continues to be so; model using a simple airborne
+                    # kinematics integrator.
 
                     # Integrate the drop's motion through the air.
-                    y_drop = rk4(rhs_airborne, drop_conditions, t_, h, args=())  # no bounce
-
-
-            soln[i+1, j] = y_drop
+                    soln[i+1, j] = rk4(rhs_airborne, drop_conditions, t_, h, args=())  # no bounce
 
     return soln, impacts_
 
