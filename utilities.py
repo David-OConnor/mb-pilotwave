@@ -15,6 +15,7 @@ def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1,
     """Calculate a wave's effect on a 2d field."""
     # Be careful about resolution; computation time is proportional to its square.
     D = 76  # todo temp
+
     grid_x = (-int(D/2), int(D/2))
     grid_y = (-int(D/2), int(D/2))
 

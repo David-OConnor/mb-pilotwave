@@ -7,10 +7,6 @@ from scipy import optimize
 from constants import *
 
 
-# D is duplicated from constants; re-define here to avoid a circular import.
-D = 76  # Cylindrical bath container diameter, mm  # todo should be x 10**-3 I think.
-
-
 # Use arrays instead of Point objects, to make working with numba easiser.
 # todo sort out Points vs arrays; numba is sensitive! Looks like arrays result in
 # todo MUCH faster performance compared to a tuple or namedtuple

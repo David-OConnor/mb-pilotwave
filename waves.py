@@ -6,7 +6,6 @@ from functools import partial
 import brisk
 
 from constants import *
-from drops import Impact, Point
 import wave_reflection
 
 
@@ -118,3 +117,23 @@ def surface_height_gradient(t: float, impacts_: Iterable[Impact], x: float, y: f
     h_y_right = height((x, y + δ/2))
 
     return (h_x_right - h_x_left) / δ, (h_y_right - h_y_left) / δ
+
+
+@jit
+def impact_force(v: float) -> float:
+    # todo superceded by momentum for now. ?
+    """Calculate the force imparted by a drop bounce on the bath."""
+    # We're transferring momentum from the drop to the bath. ?
+    # v is drop speed at impact.
+
+    # JFM; this is given in terms of the component of drag force, but might be
+    # what we're looking for.
+    C*m*g * sqrt(ρ * R_0 / σ)
+    # units: kg * m * s**-2 * sqrt(kg/m^3 * m * m * N**-1)
+    # kg * m * s**-2 * sqrt(m**-2 * s**2)  -->   kg * m * s**-2 * m**-1 * s**-1 = kg * s**-3??
+
+
+    """ From M&B:  The drop’s change
+    of momentum during impact is at most 1P ≈ 4/3 * π * ρ * R_0^3 * 2v"""
+    ΔP = (4*π / 3) * ρ * R_0**3 * 2*v
+

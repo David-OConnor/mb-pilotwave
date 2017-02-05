@@ -1,6 +1,7 @@
 # Load this file from all others with from constants import *. in addition to constants,
 # it includes standard imports like numpy and numba.
 
+from collections import namedtuple
 from typing import Iterator, Iterable, List, Tuple
 
 import numba
@@ -9,6 +10,11 @@ from numpy import pi as π, sqrt, cos, sin, tan, arctan2, exp, log
 from scipy.constants import g
 
 jit = numba.jit(nopython=True)
+
+
+# an Impact is an event of the drop hitting the surface.
+Impact = namedtuple('Impact', ['t', 'x', 'y', 'F'])  # Add other aspects like speed, force etc.
+Point = namedtuple('Point', ['x', 'y'])  # Add other aspects like speed, force etc.
 
 
 # System paramters, from MBII, Table 1, and MBI table 1.
@@ -34,9 +40,9 @@ R_0 = 0.40e-3  # Undeformed drop radius.
 ν = 20  # Drop kinematic viscocity; 10-100 cSt  MBI tested at 20 and 50.
 ν_a = 15  # Air kinematic viscosity; 15 cSt
 T_C = 10e-3  # Contact time, 1-20ms # Shown as tau elsewhere in MBII???
-f = 80  # Bath shaking frequency.  40 - 200 Hz
+f = 20  # Bath shaking frequency.  40 - 200 Hz  # 80
 # γ corresponds to path memory; high γ means high memory
-γ = g * 4.2  # Peak bath vibration acceleration, m * s^-2 0-70
+γ = g * 3.2  # Peak bath vibration acceleration, m * s^-2 0-70  # 4.2
 
 # Derived from constants
 ω = 2*π * f  # = 2π*f Bath angular frequency.  250 - 1250 rad s^-1
@@ -48,7 +54,7 @@ f = 80  # Bath shaking frequency.  40 - 200 Hz
 Bo = (ρ * g * R_0**2) / σ  # Bond number.  10**-3 - .04.
 Oh = μ * (σ*ρ*R_0)**(-1/2)  # Drop Ohnsesorge number. 0.004-2
 Oh_a = μ_a * (σ*ρ*R_0)**(-1/2)  # Air Ohnesorge number. 10**-4 - 10**-3
-Ω = 2*π*f * sqrt(ρ * R_0**3 / σ)  # Vibration number.  0 - 1.4
+Ω = 2*π * f * sqrt(ρ * R_0**3 / σ)  # Vibration number.  0 - 1.4
 Γ = γ / g  # Peak non-dimensional bath acceleration.  0 - 7
 
 

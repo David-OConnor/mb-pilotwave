@@ -20,10 +20,8 @@ def weber(v_in: float) -> float:
 @jit
 def Bo_star(τ: float) -> float:
     """Effective bond number; defined near MBI eq 3.1. Reflects effective grav in the
-    # vibrating bath frame of reference.  This component: (1 + Γ * sin(Ω * τ)) is the
-    ""effective gravity."""
-    # todo is tau_ included in the sin?? The notation in MBI and MBII makes it look
-    # todo like it's not, but including it makes more sense?
+    vibrating bath frame of reference.  This component: (1 + Γ * sin(Ω * τ)) is the
+    effective gravity."""
     return Bo * (1 + Γ * sin(Ω * τ))
 
 
@@ -170,16 +168,6 @@ def dimensionize_exit(τ: float, Z: float, we: float) -> Tuple[float, float, flo
     """Add dimensions to contact time, height, and weber number(velocity). Ie, use this
     for the exit conditions after contact."""
     return τ / ω_D, Z * R_0, sqrt((we * σ) / (ρ * R_0))
-
-
-@jit
-def dimensionize_motion(soln: np.ndarray) -> np.ndarray:
-    """Re-dimensionalize arrays of position and velocity, as returned by the lin/log integrators
-    for contact time."""
-    soln2 = np.copy(soln)  # Don't want to modify soln in place!!
-    soln2[:, 0] *= R_0
-    soln2[:, 1] = sqrt((soln2[:, 1] * σ) / (ρ * R_0))
-    return soln2
 
 
 def remove_dimensions(z: float, t: float) -> Tuple[float, float]:
