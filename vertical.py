@@ -72,6 +72,8 @@ def rhs_log_spring(y: np.ndarray, τ: float, c1: float, c2: float, c3: float) ->
 def log_spring(τ: np.array, v_in: float) -> np.ndarray:
     """Vertical drop position during contact, modelled as a logarithmic spring,
     from MBI, section 3."""
+    # Important note: This only works with small-mod Weber numbers (ie < 3), per MBII.
+    # This effectively means, use only with small impact velocity. R_0 * V_in**2 <= 6.5e-5
 
     # τ is dimensionless time, ie ω_D * t
 
@@ -80,7 +82,7 @@ def log_spring(τ: np.array, v_in: float) -> np.ndarray:
 
     # c1 through three are experimentally-determined constants.
     c1 = 2  # nonlinearity of the spring model.
-    c2 = 12.5  # 12.5 for 20cSt, 7.5 for 50cSt. Amount of viscous dissipation within the bodies.
+    c2 = 12.5 if ν == 20 else 7.5  # 12.5 for 20cSt, 7.5 for 50cSt. Amount of viscous dissipation within the bodies.
     c3 = 1.4  # kinetic energy associated with fluid motion
 
     # 0 is the initial position at the start of contact, due to the coordinate system

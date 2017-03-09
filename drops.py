@@ -21,9 +21,6 @@ jit = numba.jit(nopython=True)
 # by Anand U. Oza, Rodolfo R. Rosales and John W. M. Bush
 
 
-impacts = []
-
-
 class IntegrationEvent(Exception):
     """Pass the new y value as an argument."""
     pass
@@ -31,12 +28,12 @@ class IntegrationEvent(Exception):
 
 @jit
 def effective_grav(t:  float) -> float:
-    """Effective gravity in bath frame of reference. From MBI; not sure where
-    to use it atm."""
+    """Effective gravity in bath frame of reference. From MBII, top of section 2.
+     Not sure where to use it atm."""
     # Gravity plus the fictitious force in the vibrating bath reference frame.
     # I think this is taken care of numerically simply by subtracting bath height
     # when calculating the height below drop. Maybe.
-    # Shown as  g*(t)
+    # Shown as  g*(t) in MBII, section 4.4.
     return g + γ * sin(2*π * f * t)
 
 
@@ -45,6 +42,10 @@ def effective_grav2(τ:  float) -> float:
     to use it atm."""
     # Shown as B0*(τ) in MBI.
     return 1 + Γ * sin(Ω * τ)
+
+
+
+# Horizontal dynamics here. Consider moving to a separate module.
 
 
 @jit
@@ -72,6 +73,31 @@ def surface_oscilation(t: float) -> Tuple[float, float, float]:
     return bath_height, bath_vel, bath_accel
 
 
+
+@jit
+def D_(C: float, t: float) -> float:
+    """From MBI, below Eq 4.10"""
+    return C * sqrt(ρ * R_0 / σ) * F_N(t) + 6 * π * R_0 * μ_a
+
+
+def horiz_kick():
+    """From MBII, Section 4.3.  Equation 4.5 is the instantaneous tangental component
+    of the reaction force; averaging this over the contact period should be a sufficent
+    approximation."""
+
+    F_tang = (dh(X, τ) / dX) * f
+
+
+
+def horiz_dynamics():
+    """MBII, Eq 4.10."""
+    # todo WIP
+
+
+    #m * x_pp + D(t) * x*p = -h_x * F*n
+
+
+
 # def bounce():
 #     # FT is the trangental component of the reaction force.
 #     F = 0
@@ -82,7 +108,7 @@ def surface_oscilation(t: float) -> Tuple[float, float, float]:
 def bounce_v(grad_x: float, grad_y: float, vx: float, vy: float, vz: float) -> np.ndarray:
     """Calculate the outgoing velocity in x, y, and z directions after a bounce."""
     # todo atm the drop does not lose any momentum to the surface.
-    # todo you coulud include bath oscillation velocity here, but may need
+    # todo you could include bath oscillation velocity here, but may need
     # todo a fininte contact time to do so.
     v = np.array([vx, vy, vz])
     normal = np.cross(np.array([1, 0, grad_x]), np.array([0, 1, grad_y]))
@@ -137,6 +163,9 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple[np.ndarray, List[Impact
     # Per MBI, initial conditions play little role in subsequent dynamics.
     # Set initial height low for now; odd things happen with vert dynamics if the
     # impact velocity is too high.
+
+    # Initial conditions shouldn't matter much, per MBII section 2, assuming the drop
+    # doesn't coalese.
     drops = np.array([
         [0, 0, .001, 0, 0, 0],
         # [100, 110, 10, 0, 0, 0],
@@ -194,11 +223,9 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple[np.ndarray, List[Impact
                 sz_contact, vz_contact = contact_motion[j, contact_mot_ix]
                 bath_z, bath_v = surface_oscilation(t_)[:2]
 
-                # todo take out bath oscillation while troubleshooting.
                 # Add in bath height.  The contact integrator operates relative to the
                 # bath surface.  Also add in drop radius, since this integrator tracks
                 # non-dim Z = 0, which is really surface + R0
-                # todo examien this!
                 sz_contact_bathed = sz_contact + bath_z + R_0
 
                 # todo add back in horizontal dynamics
@@ -208,6 +235,25 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple[np.ndarray, List[Impact
                 # Check for an exit into the air.
                 if sz_contact >= 0:  # Don't use the one that includes bath motion here.
                     print(f"Exit   t  :{round(t_, 5)} vz: {round(vz, 3)}")
+
+                    # Update horizontal dynamics. I don't know if this is the best
+                    # way to approximate this, but just add in the horiz kick in x and y
+                    # during the instant the drop exited?
+                    # According to MBII section 4.5, it looks like we need to take
+                    # the average  gradient over contact time?
+
+                    t_contact_start, t_contact_end = contact_t[j, -1], t[i]
+
+                    grad_x_start, grad_y_start = waves.surface_height_gradient(t_contact_start, impacts_, sx, sy)
+                    grad_x_end, grad_y_end = waves.surface_height_gradient(t_contact_end, impacts_, sx, sy)
+                    grad_x, grad_y = np.mean([grad_x_start, grad_x_end]), np.mean([grad_y_start, grad_y_end])
+
+                    # This bounce velocity change overrides the default, of last step's accel.
+
+                    vx_bounce, vy_bounce, vz_bounce = bounce_v(grad_x, grad_y, vx, vy, vz)
+
+                    soln[i + 1, j][3] = vx_bounce
+                    soln[i + 1, j][4] = vy_bounce
 
                     # Leave in_contact, contact_motion, and exit_time blank while the drop's airborne.
                     in_contact[j], contact_motion[j], contact_t[j] = False, 0, 0
@@ -228,8 +274,6 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple[np.ndarray, List[Impact
 
                 else:
                     surface_h_below_drop = sz - 100  # This means trigger the airborne integrator.
-
-                    # todo remove oscillation while in the bath frame. Fix this once done troubleshooting.
 
                 # Check for an impact.
                 # reference the bottom of the drop
@@ -262,7 +306,6 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple[np.ndarray, List[Impact
                     contact_motion[j, :] = contact_mot
                     contact_motion[j, :, 0] *= R_0  # Re-dimensionalize sz.
 
-
                     # todo not sure if we should use the airborne integrator, or contact
                     # todo one for this tick. Let's try airborne. Seems to work better,
                     # todo avoiding an odd spike
@@ -270,21 +313,12 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple[np.ndarray, List[Impact
                     # Commented-out contact-version below.
                     # soln[i+1, j] = 0, 0, contact_motion[j, 0, 0], 0, 0, contact_motion[j, 0, 1]
 
-
                     # Add an impact for processing the wave field.
                     v = sqrt(vx ** 2 + vy ** 2 + vz ** 2)  # todo net v, or vz only??
                     impacts_.append(Impact(t_, sx, sy, v))
 
-
-                    # grad_x, grad_y = surface_height_gradient(t_, impacts_, sx, sy)
-                    # # This bounce velocity change overrides the default, of last step's accel.
-                    #
-                    # vx_bounce, vy_bounce, vz_bounce = bounce_v(grad_x, grad_y,
-                    #                                            vx, vy, vz)
-                    #
                     # # todo here, or in bounce_v, goes the force imparted on the drop:
                     # # todo −mg∇h(x_p, t) horizontal force??
-
 
                 else:
                     # The drop's airborne and continues to be so; model using a simple airborne

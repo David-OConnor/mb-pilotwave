@@ -27,7 +27,6 @@ def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1,
     scaled_x = (grid_x[0] * resolution, grid_x[1] * resolution)
     scaled_y = (grid_y[0] * resolution, grid_y[1] * resolution)
 
-    print(scaled_x, scaled_y)
     range_x = range(*scaled_y)
     range_y = range(*scaled_x)
 
