@@ -41,7 +41,7 @@ else:
 
 # Drop radius: 0.07 - 0.8mm. Smaller drops coalesce; larger ones don't do anything new at
 # the driving accelerations used in MBI.
-R_0 = 0.28e-3  # Undeformed drop radius.
+R_0 = 0.25e-3  # Undeformed drop radius.
 
 ρ_a = 1.2  # Air density, kg/m^3
 μ = 1e-2  # Drop dynamic viscocity. 10**-3 - 10**-1 kg*m^-1*s^-1

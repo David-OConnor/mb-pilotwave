@@ -1,11 +1,17 @@
 # This file contains functions defining the vertical motion of the drop while in contact
 # with the bath, as defined in MBI, section 3.
 
-import brisk
+from typing import Tuple
 
+import brisk
+import numpy as np
+from numpy import sin, cos, log, sqrt, pi as π
 from scipy import integrate
 
-from constants import *
+# from constants import *
+# Importing * from constants prevents autoreload from working properly when changing constants.
+from constants import jit, Bo, Γ, Ω, Oh_a, ρ_a, ρ, R_0, ν, σ, ω_D, Oh, f, m, \
+    g, μ_a, γ, C, ω, Impact
 
 
 # todo the lin spring models aren't matching the paper atm, but the log model seems to work.

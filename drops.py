@@ -1,13 +1,22 @@
+from typing import NamedTuple, Iterable, Tuple, List
+
 import matplotlib.pyplot as plt
-
+import numpy as np
+from numpy import sin, cos, log, sqrt, pi as π
 from scipy import integrate
+import numba
 
-from constants import *
+from constants import jit, Bo, Γ, Ω, Oh_a, ρ_a, ρ, R_0, ν, σ, ω_D, Oh, f, m, \
+    g, μ_a, γ, C, ω, Impact
 from wave_reflection import find_reflection_points
 import vertical, waves
 
 
-jit = numba.jit(nopython=True)
+class Oscillation(NamedTuple):
+    height: float
+    velocity: float
+    acceleration: float
+
 
 # Assume we're not modeling the up and down motions; each simulation tick
 # represents the particle impacting the grid
@@ -70,6 +79,7 @@ def surface_oscilation(t: float) -> Tuple[float, float, float]:
     bath_vel = γ * ω**-1 * sin(ω * t)  # + C
     bath_height = -γ * ω**(-2) * cos(ω * t)  # + C*t
 
+    # return Oscillation(bath_height, bath_vel, bath_accel)  # Jit doesn't like namedtuple?
     return bath_height, bath_vel, bath_accel
 
 
@@ -167,7 +177,7 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple[np.ndarray, List[Impact
     # Initial conditions shouldn't matter much, per MBII section 2, assuming the drop
     # doesn't coalese.
     drops = np.array([
-        [0, 0, .001, 0, 0, 0],
+        [10, 5, .001, .1, .1, 0],
         # [100, 110, 10, 0, 0, 0],
         # [100, 95, 10, 0, 0, 0],
         # [105, 100, 10, 0, 0, 0],
@@ -228,13 +238,14 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple[np.ndarray, List[Impact
                 # non-dim Z = 0, which is really surface + R0
                 sz_contact_bathed = sz_contact + bath_z + R_0
 
-                # todo add back in horizontal dynamics
-                sx, sy, sz, vx, vy, vz = 0, 0, sz_contact_bathed, 0, 0, vz_contact
+                # todo look into how MBI calculates horizontal movement while in contact.
+                # todo for now, we just keep velocity AND position static... Not realistic.
+                sx, sy, sz, vx, vy, vz = sx, sy, sz_contact_bathed, vx, vy, vz_contact
                 soln[i+1, j] = sx, sy, sz, vx, vy, vz
 
                 # Check for an exit into the air.
                 if sz_contact >= 0:  # Don't use the one that includes bath motion here.
-                    print(f"Exit   t  :{round(t_, 5)} vz: {round(vz, 3)}")
+                    # print(f"Exit   t  :{round(t_, 5)} vz: {round(vz, 3)}")
 
                     # Update horizontal dynamics. I don't know if this is the best
                     # way to approximate this, but just add in the horiz kick in x and y
@@ -249,6 +260,7 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple[np.ndarray, List[Impact
                     grad_x, grad_y = np.mean([grad_x_start, grad_x_end]), np.mean([grad_y_start, grad_y_end])
 
                     # This bounce velocity change overrides the default, of last step's accel.
+                    # print(grad_x, grad_y, "GRADS")
 
                     vx_bounce, vy_bounce, vz_bounce = bounce_v(grad_x, grad_y, vx, vy, vz)
 
@@ -280,7 +292,7 @@ def ode_standalone(t: np.ndarray, corral=False) -> Tuple[np.ndarray, List[Impact
                 # rather than the top by shifting down half a radius.
                 # surface_h_below_drop -= (surface_oscilation(t_)[0] + R_0)
                 if sz <= surface_h_below_drop + R_0:
-                    print(f"Impact   t:  {round(t_, 5)} vz: {round(vz, 3)}, sz: {round(sz, 3)}")
+                    # print(f"Impact   t:  {round(t_, 5)} vz: {round(vz, 3)}, sz: {round(sz, 3)}")
                     # We've found an impact.
                     in_contact[j] = True
                     # Model contact period with vertical functions from MBI

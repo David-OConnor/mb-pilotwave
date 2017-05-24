@@ -1,10 +1,14 @@
 # This file contains functions used to calculate wave reflections off a wall.
 
 from functools import partial
+from typing import NamedTuple, Iterable, Tuple, List, Iterator
 
+import numpy as np
+from numpy import sin, cos, log, sqrt, pi as π, arctan2
 from scipy import optimize
 
-from constants import *
+from constants import jit, Bo, Γ, Ω, Oh_a, ρ_a, ρ, R_0, ν, σ, ω_D, Oh, f, m, \
+    g, μ_a, Impact
 
 
 # Use arrays instead of Point objects, to make working with numba easiser.

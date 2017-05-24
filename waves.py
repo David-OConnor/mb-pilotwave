@@ -2,13 +2,16 @@
 # Mostly from MBII.
 
 from functools import partial
+from typing import NamedTuple, Iterable, Tuple, List
 
 import brisk
+import numpy as np
+from numpy import sin, cos, log, sqrt, pi as π, exp
 from scipy import special
 
-from constants import *
+from constants import jit, Bo, Γ, Ω, Oh_a, ρ_a, ρ, R_0, ν, σ, ω_D, Oh, f, m, \
+    g, μ_a, γ, C, ω, D, Γ_F, μ, Impact, Point
 import wave_reflection
-
 
 
 # @jit
@@ -31,7 +34,6 @@ def surface_height(t: float, r: float, v: float) -> float:
     # todo I think we can approximate Oh_e as just Oh? In that case, this value's wack?
     # Decay time (s), then undimensionalized, of waves without forcing, from JFM (T_D) ther
     τ_D = ω_D * (1 / 54.9)
-
 
     # These constants are found in tables in MBII, section A.5.
     k_C__k_F = .971  # ratio of k_C to k_F
@@ -58,7 +60,7 @@ def surface_height(t: float, r: float, v: float) -> float:
     term2 = (k_C**2*k_F*Oh_e**(1/2))/(3*k_F**2 + Bo)
 
     # From eq 3.7
-    term4 = cos(Ω * τ / 2) * exp((Γ / Γ_F - 1) * (τ / τ_D)) * brisk.j0(k_C * r)
+    term4 = cos(Ω * τ / 2) * exp((Γ/Γ_F - 1) * (τ / τ_D)) * brisk.j0(k_C * r)
 
     # H = partial(special.hankel1, 0)  # todo ??
     # From eq 3.9
@@ -75,12 +77,16 @@ def surface_height(t: float, r: float, v: float) -> float:
     # time is force... Can we just use this?
 
     # "The drop’s change of momentum during impact is at most ΔP ≈ 4/3 * π *
-    # ρ * R_0^3 * 2v"
+    # ρ * R_0^3 * 2v" : MBII, Section A.3.
 
     ΔP = (4 * π / 3) * ρ * R_0**3 * 2 * v
     amplitude = ΔP * sin(Ω/2)
 
 
+    # todo using this now; seems closer to the right Order of mag?
+    # todo still probably doing this wrong.
+    amplitude = (ρ*R_0**3*σ)**(1/2) * 2*v # F_R; rebound force, per the same section?
+    amplitude *= 100  # todo another fudge fac.
 
     # print(Γ, Γ_F, τ, τ_D)
     # print((Γ / Γ_F - 1) * (τ / τ_D))
@@ -149,7 +155,6 @@ def surface_height_gradient(t: float, impacts_: Iterable[Impact], x: float, y: f
     Used to calculate bounce mechanics."""
     # todo perhaps you should take into account higher order effects.
     δ = 1e-6  # Arbitrarily small
-
     height = partial(net_surface_height, t, impacts_)
 
     # Take a sample on each side of the location we're testing.
@@ -157,6 +162,8 @@ def surface_height_gradient(t: float, impacts_: Iterable[Impact], x: float, y: f
     h_x_right = height((x + δ/2, y))
     h_y_left = height((x, y - δ/2))
     h_y_right = height((x, y + δ/2))
+
+    print(h_x_left, h_x_right, h_y_left, h_y_right)
 
     return (h_x_right - h_x_left) / δ, (h_y_right - h_y_left) / δ
 

@@ -51,7 +51,7 @@ def wave_field(t: float, impacts: Iterable[drops.Impact], resolution: int=1,
     return h
 
 
-def reflection_field(impact: np.ndarray, center: np.ndarray, θiw: float) -> np.ndarray:
+def reflection_field(impact: np.ndarray, center: np.ndarray, θiw: float) -> None:
     """Plot the distances to a reflected ray in a circular corral, for every
     point in a circle.  Useful for seeing a ray's reflected path."""
     result = np.zeros([D + 5, D + 5])
@@ -107,7 +107,7 @@ def plot_field(f, scale0: Tuple, scale1: Tuple, resolution0: float, resolution1:
     return result
 
 
-def plot_path(soln: np.ndarray, plot=True) -> np.ndarray:
+def plot_path(soln: np.ndarray, plot=True) -> None:
     """Plot the drop's x and y positions, parameterized for time."""
     _, num_drops, t = soln.shape
     for i in range(num_drops):
